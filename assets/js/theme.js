@@ -24,6 +24,8 @@ function cssVar(name) {
 function collectPersistedState() {
   return {
     version: 1,
+    paperTrades,
+    activeTradeId,
     paperLedger,
     paperTrade,
     autoPaper,
@@ -38,8 +40,12 @@ function collectPersistedState() {
 
 function applyPersistedState(state) {
   if (!state) return;
+  paperTrades = Array.isArray(state.paperTrades)
+    ? state.paperTrades
+    : (state.paperTrade ? [state.paperTrade] : []);
+  activeTradeId = state.activeTradeId || paperTrades[0]?.tradeId || null;
+  syncPaperTradeSelection();
   paperLedger = Array.isArray(state.paperLedger) ? state.paperLedger : [];
-  paperTrade = state.paperTrade || null;
   autoPaper = !!state.autoPaper;
   if (state.theme) setTheme(state.theme, { persist: false });
   if (state.symbol) document.getElementById('ticker').value = state.symbol;
@@ -51,6 +57,14 @@ function applyPersistedState(state) {
   if (btn) {
     btn.textContent = `Auto Paper: ${autoPaper ? 'On' : 'Off'}`;
     btn.classList.toggle('active', autoPaper);
+  }
+  renderOpenTrades();
+  if (paperTrade) {
+    const price = Number.isFinite(paperTrade.lastPrice) ? paperTrade.lastPrice : paperTrade.entry;
+    const exit = exitSignalForTrade(paperTrade, price, lastSignalSnapshot);
+    renderTradeStatus(paperTrade, computeTradePnl(paperTrade, price), exit.status, exit.rule);
+  } else {
+    renderTradeStatus(null, null, 'Waiting', 'Open a paper long/short to track it');
   }
   renderLedger();
   renderRiskDashboard();

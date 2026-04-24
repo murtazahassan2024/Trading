@@ -74,7 +74,7 @@ body{background:var(--bg);font-family:'Syne',sans-serif;color:var(--text);min-he
 .sig-label{font-size:9px;font-family:'Space Mono',monospace;letter-spacing:3px;color:var(--muted);margin-bottom:5px}
 .sig-word{display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-weight:800;letter-spacing:0;max-width:100%;overflow:hidden}
 .sig-word span{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;letter-spacing:1.5px;flex:0 1 auto;min-width:0}
-.sig-word strong{font-size:clamp(26px,4.8vw,48px);line-height:1;flex:0 1 auto;min-width:0;max-width:62%;overflow:hidden;text-overflow:clip}
+.sig-word strong{line-height:1;flex:0 1 auto;min-width:0;max-width:62%;overflow:hidden;text-overflow:clip}
 @media(max-width:720px){.sig-word{gap:5px}.sig-word strong{font-size:clamp(24px,10vw,40px);max-width:58%}.sig-word span{font-size:9px;letter-spacing:1px}}
 @media(max-width:380px){.sig-word{flex-direction:column;gap:4px}.sig-word strong{max-width:100%}}
 .sig-conf{font-size:11px;color:var(--muted);margin-top:5px;font-family:'Space Mono',monospace}

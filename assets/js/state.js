@@ -8,11 +8,30 @@ let lastRSI = null, lastCons = null;
 let fundingTimer = null;
 let scanTimer = null;
 let paperTrade = null;
+let paperTrades = [];
 let paperLedger = [];
 let autoPaper = false;
 let lastAutoActionAt = 0;
 let lastSignalSnapshot = null;
 let audioCtx = null;
+let activeTradeId = null;
+
+function syncPaperTradeSelection() {
+  if (!Array.isArray(paperTrades)) paperTrades = [];
+  if (activeTradeId) {
+    paperTrade = paperTrades.find(trade => trade.tradeId === activeTradeId) || null;
+  }
+  if (!paperTrade && paperTrades.length) {
+    paperTrade = paperTrades[0];
+    activeTradeId = paperTrade.tradeId;
+  }
+  if (!paperTrades.length) {
+    paperTrade = null;
+    activeTradeId = null;
+  }
+  if (paperTrade) activeTradeId = paperTrade.tradeId;
+  return paperTrade;
+}
 
 const K = { o:[], h:[], l:[], c:[], v:[], t:[], labels:[] };
 const MAX = 200;

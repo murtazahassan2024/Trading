@@ -13,7 +13,7 @@ function openPaperTrade(side) {
 function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
   if (!ind || !ind.risk || !Number.isFinite(current)) return false;
   const isLong = side === 'LONG';
-  paperTrade = {
+  const newTrade = {
     tradeId: crypto.randomUUID ? crypto.randomUUID() : `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     side,
     symbol: document.getElementById('ticker').value.toUpperCase().trim() || 'BTCUSDT',
@@ -25,17 +25,18 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
     mode,
     lastExitStatus: null
   };
+  paperTrade = newTrade;
   syncTradeChartLines();
   if (chart) chart.update('none');
-  updatePaperTrade(current, lastSignalSnapshot);
   pushAlert(isLong?'▲':'▼', isLong?'#00e5a0':'#ff4d6d', `${mode === 'auto' ? 'Auto paper' : 'Paper'} ${side} opened at ${fmtPrice(current)}. Lines added to chart.`, {
     persist:true,
-    tradeId:paperTrade.tradeId,
-    symbol:paperTrade.symbol,
-    side:paperTrade.side,
+    tradeId:newTrade.tradeId,
+    symbol:newTrade.symbol,
+    side:newTrade.side,
     kind:'trade',
     status:'open'
   });
+  updatePaperTrade(current, lastSignalSnapshot);
   renderRiskDashboard();
   persistAppStateSoon();
   return true;

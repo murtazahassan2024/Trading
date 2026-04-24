@@ -91,9 +91,9 @@ window.addEventListener('load',()=>{
       const state = window.Persistence ? await Persistence.load() : null;
       if (state) {
         applyPersistedState(state);
-        Persistence.setStatus('Loaded saved state from Supabase.');
+        Persistence.setStatus('Loaded shared Supabase profile.');
       } else if (window.Persistence && Persistence.config().url) {
-        Persistence.setStatus('Connected. No saved state yet.');
+        Persistence.setStatus('Connected to shared Supabase profile. No saved state yet.');
       }
       if (window.Persistence) {
         alertLog = await Persistence.loadAlerts();
