@@ -1,0 +1,90 @@
+function initTheme() {
+  const saved = localStorage.getItem('signalos-theme');
+  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  setTheme(saved || (prefersLight ? 'light' : 'dark'));
+}
+
+function setTheme(theme) {
+  const light = theme === 'light';
+  document.body.classList.toggle('light', light);
+  localStorage.setItem('signalos-theme', light ? 'light' : 'dark');
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.textContent = light ? 'Dark' : 'Light';
+  updateChartTheme();
+  persistAppStateSoon();
+}
+
+function toggleTheme() {
+  setTheme(document.body.classList.contains('light') ? 'dark' : 'light');
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function collectPersistedState() {
+  return {
+    version: 1,
+    paperLedger,
+    paperTrade,
+    autoPaper,
+    theme: document.body.classList.contains('light') ? 'light' : 'dark',
+    symbol: document.getElementById('ticker')?.value || 'BTCUSDT',
+    timeframe: document.getElementById('timeframe')?.value || '5m',
+    accountSize: document.getElementById('acct-size')?.value || '10000',
+    riskPct: document.getElementById('risk-pct')?.value || '1',
+    feePct: document.getElementById('fee-pct')?.value || '0.05',
+  };
+}
+
+function applyPersistedState(state) {
+  if (!state) return;
+  paperLedger = Array.isArray(state.paperLedger) ? state.paperLedger : [];
+  paperTrade = state.paperTrade || null;
+  autoPaper = !!state.autoPaper;
+  if (state.theme) setTheme(state.theme);
+  if (state.symbol) document.getElementById('ticker').value = state.symbol;
+  if (state.timeframe) document.getElementById('timeframe').value = state.timeframe;
+  if (state.accountSize) document.getElementById('acct-size').value = state.accountSize;
+  if (state.riskPct) document.getElementById('risk-pct').value = state.riskPct;
+  if (state.feePct) document.getElementById('fee-pct').value = state.feePct;
+  const btn = document.getElementById('auto-paper-btn');
+  if (btn) {
+    btn.textContent = `Auto Paper: ${autoPaper ? 'On' : 'Off'}`;
+    btn.classList.toggle('active', autoPaper);
+  }
+  renderLedger();
+  renderRiskDashboard();
+  renderPositionSizing();
+}
+
+function persistAppStateSoon() {
+  if (window.Persistence) Persistence.saveSoon(collectPersistedState);
+}
+
+async function saveAppStateNow() {
+  try {
+    await Persistence.save(collectPersistedState());
+    Persistence.setStatus(`Saved to Supabase at ${new Date().toLocaleTimeString()}`);
+  } catch (err) {
+    Persistence.setStatus(`Save failed: ${err.message}`);
+  }
+}
+
+async function connectSupabase() {
+  const url = document.getElementById('supabase-url').value.trim();
+  const key = document.getElementById('supabase-key').value.trim();
+  if (!url || !key) {
+    Persistence.setStatus('Add your Supabase URL and anon key first.');
+    return;
+  }
+  try {
+    Persistence.saveConfig(url, key);
+    const state = await Persistence.load();
+    applyPersistedState(state);
+    await saveAppStateNow();
+    Persistence.setStatus(`Connected. Device id: ${Persistence.deviceId().slice(0,8)}...`);
+  } catch (err) {
+    Persistence.setStatus(`Supabase connect failed: ${err.message}`);
+  }
+}

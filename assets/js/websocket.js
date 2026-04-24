@@ -3,9 +3,7 @@ let connected = false;
 let activeConnectionId = 0;
 
 function wsBase() {
-  return document.getElementById('testnet').checked
-    ? 'wss://testnet.binancefuture.com/ws'
-    : 'wss://fstream.binance.com/stream';
+  return Exchange.wsBase();
 }
 
 function closeAll() {
@@ -17,7 +15,7 @@ function closeAll() {
 function openWS(sym,tf) {
   const connectionId = ++activeConnectionId;
   const s=sym.toLowerCase();
-  const streams=`${s}@kline_${tf}/${s}@miniTicker/${s}@depth5@100ms`;
+  const streams=Exchange.streams(sym, tf);
   const url=`${wsBase()}?streams=${streams}`;
   setStatus('connecting');
 

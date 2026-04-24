@@ -7,6 +7,17 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="assets/css/styles.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="assets/js/exchange.js" defer></script>
+<script src="assets/js/persistence.js" defer></script>
+<script src="assets/js/state.js" defer></script>
+<script src="assets/js/theme.js" defer></script>
+<script src="assets/js/indicators.js" defer></script>
+<script src="assets/js/charts.js" defer></script>
+<script src="assets/js/render.js" defer></script>
+<script src="assets/js/scanner.js" defer></script>
+<script src="assets/js/paper.js" defer></script>
+<script src="assets/js/backtest.js" defer></script>
 <script src="assets/js/websocket.js" defer></script>
 <script src="assets/js/app.js" defer></script>
 </head>
@@ -57,16 +68,76 @@
     <div class="metric"><div class="metric-label">Open Interest</div><div class="metric-val" id="m-oi" style="color:var(--accent3)">—</div><div class="metric-sub">contracts</div></div>
   </div>
 
+  <div class="platform-grid">
+    <div class="platform-panel">
+      <div class="ptitle">Position sizing</div>
+      <div class="sizing-grid">
+        <label>Account $<input id="acct-size" type="number" value="10000" min="0" step="100"/></label>
+        <label>Risk %<input id="risk-pct" type="number" value="1" min="0.1" max="5" step="0.1"/></label>
+        <label>Fee %<input id="fee-pct" type="number" value="0.05" min="0" step="0.01"/></label>
+      </div>
+      <div class="mini-result" id="position-size-result">Waiting for stop distance...</div>
+    </div>
+    <div class="platform-panel">
+      <div class="ptitle">Risk dashboard</div>
+      <div class="risk-grid" id="risk-dashboard">
+        <div><span>Trades</span><strong>0</strong></div>
+        <div><span>Win rate</span><strong>—</strong></div>
+        <div><span>Total R</span><strong>0.00R</strong></div>
+        <div><span>Open risk</span><strong>—</strong></div>
+      </div>
+    </div>
+    <div class="platform-panel">
+      <div class="ptitle">Alerts</div>
+      <div class="alert-controls">
+        <label><input type="checkbox" id="browser-alerts"/> Browser</label>
+        <label><input type="checkbox" id="sound-alerts" checked/> Sound</label>
+        <button class="small-btn" type="button" onclick="enableBrowserAlerts()">Enable</button>
+      </div>
+      <div class="mini-result" id="alert-state">Sound alerts enabled for trade exits.</div>
+    </div>
+    <div class="platform-panel">
+      <div class="ptitle">Supabase persistence</div>
+      <div class="sizing-grid supabase-grid">
+        <label>Project URL<input id="supabase-url" type="url" placeholder="https://xyz.supabase.co"/></label>
+        <label>Anon key<input id="supabase-key" type="password" placeholder="anon public key"/></label>
+      </div>
+      <div class="alert-controls">
+        <button class="small-btn" type="button" onclick="connectSupabase()">Connect</button>
+        <button class="small-btn" type="button" onclick="saveAppStateNow()">Save now</button>
+      </div>
+      <div class="mini-result" id="supabase-state">Not connected. Run supabase/schema.sql, then connect.</div>
+    </div>
+  </div>
+
   <div class="main-grid">
     <div class="panel">
       <div class="ptitle">Kline chart — <span id="chart-label">—</span> <span class="lpill">LIVE</span></div>
       <div style="position:relative;height:270px"><canvas id="priceChart" role="img" aria-label="Live kline price chart with real Binance Futures data"></canvas></div>
+      <div class="lower-chart-grid">
+        <div class="lower-chart">
+          <div class="mini-title">Volume</div>
+          <canvas id="volumeChart" aria-label="Volume histogram"></canvas>
+        </div>
+        <div class="lower-chart">
+          <div class="mini-title">RSI</div>
+          <canvas id="rsiChart" aria-label="RSI momentum chart"></canvas>
+        </div>
+        <div class="lower-chart">
+          <div class="mini-title">MACD</div>
+          <canvas id="macdChart" aria-label="MACD histogram chart"></canvas>
+        </div>
+      </div>
+      <div class="chart-insights" id="chart-insights">
+        <div><span>Beginner read</span><strong>Waiting for enough candles...</strong></div>
+        <div><span>Expert read</span><strong>Waiting for regime and momentum stack...</strong></div>
+      </div>
     </div>
     <div class="signal-panel">
       <div class="ptitle">Master signal</div>
       <div class="big-signal hold" id="big-signal">
         <div class="sig-label">CONSENSUS</div>
-        <div class="sig-word gold" id="sig-word">—</div>
+        <div class="sig-word gold" id="sig-word"><span>FINAL DECISION: </span><strong>—</strong></div>
         <div class="sig-conf" id="sig-conf">Awaiting live data...</div>
       </div>
       <div class="position-plan none" id="position-plan">
@@ -91,12 +162,35 @@
       <button class="trade-btn long-btn" type="button" onclick="openPaperTrade('LONG')">Open Long</button>
       <button class="trade-btn short-btn" type="button" onclick="openPaperTrade('SHORT')">Open Short</button>
       <button class="trade-btn flat-btn" type="button" onclick="closePaperTrade('manual')">Close</button>
+      <button class="trade-btn auto-btn" id="auto-paper-btn" type="button" onclick="toggleAutoPaper()">Auto Paper: Off</button>
     </div>
     <div class="trade-status" id="trade-status">
       <div><span>Position</span><strong>FLAT</strong></div>
       <div><span>P/L</span><strong>—</strong></div>
       <div><span>Exit signal</span><strong>Waiting</strong></div>
       <div><span>Rule</span><strong>Open a paper long/short to track it</strong></div>
+    </div>
+  </div>
+
+  <div class="backtest-panel">
+    <div class="ptitle">Backtesting engine <span class="lpill">LOCAL</span></div>
+    <div class="backtest-actions">
+      <button class="small-btn" type="button" onclick="runBacktest()">Run Current Symbol</button>
+      <button class="small-btn" type="button" onclick="runScannerBacktests()">Run Scanner Set</button>
+    </div>
+    <div class="backtest-grid" id="backtest-results">
+      <div><span>Trades</span><strong>—</strong></div>
+      <div><span>Win rate</span><strong>—</strong></div>
+      <div><span>Profit factor</span><strong>—</strong></div>
+      <div><span>Max drawdown</span><strong>—</strong></div>
+      <div><span>Total R</span><strong>—</strong></div>
+    </div>
+  </div>
+
+  <div class="ledger-panel">
+    <div class="ptitle">Paper trading ledger</div>
+    <div class="ledger-table" id="paper-ledger">
+      <div class="scan-empty">Closed paper trades will appear here.</div>
     </div>
   </div>
 
