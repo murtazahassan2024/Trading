@@ -14,6 +14,7 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
   if (!ind || !ind.risk || !Number.isFinite(current)) return false;
   const isLong = side === 'LONG';
   paperTrade = {
+    tradeId: crypto.randomUUID ? crypto.randomUUID() : `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     side,
     symbol: document.getElementById('ticker').value.toUpperCase().trim() || 'BTCUSDT',
     entry: current,
@@ -27,7 +28,14 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
   syncTradeChartLines();
   if (chart) chart.update('none');
   updatePaperTrade(current, lastSignalSnapshot);
-  pushAlert(isLong?'▲':'▼', isLong?'#00e5a0':'#ff4d6d', `${mode === 'auto' ? 'Auto paper' : 'Paper'} ${side} opened at ${fmtPrice(current)}. Lines added to chart.`);
+  pushAlert(isLong?'▲':'▼', isLong?'#00e5a0':'#ff4d6d', `${mode === 'auto' ? 'Auto paper' : 'Paper'} ${side} opened at ${fmtPrice(current)}. Lines added to chart.`, {
+    persist:true,
+    tradeId:paperTrade.tradeId,
+    symbol:paperTrade.symbol,
+    side:paperTrade.side,
+    kind:'trade',
+    status:'open'
+  });
   renderRiskDashboard();
   persistAppStateSoon();
   return true;
@@ -50,7 +58,18 @@ function closePaperTrade(reason='manual') {
     rMultiple,
   });
   if (paperLedger.length > 50) paperLedger.pop();
-  pushAlert('■', pnl>=0?'#00e5a0':'#ff4d6d', `Paper ${paperTrade.side} closed: ${reason}, P/L ${pnl.toFixed(2)}%`);
+  pushAlert('■', pnl>=0?'#00e5a0':'#ff4d6d', `Paper ${paperTrade.side} closed: ${reason}, P/L ${pnl.toFixed(2)}%`, {
+    persist:true,
+    tradeId:paperTrade.tradeId,
+    symbol:paperTrade.symbol,
+    side:paperTrade.side,
+    kind:'trade',
+    status:'closed',
+    expiresAt:new Date(Date.now()+3*24*60*60*1000).toISOString()
+  });
+  if (window.Persistence) {
+    Persistence.markTradeAlertsClosed(paperTrade.tradeId).catch(err => Persistence.setStatus(`Alert cleanup failed: ${err.message}`));
+  }
   paperTrade = null;
   syncTradeChartLines();
   if (chart) chart.update('none');

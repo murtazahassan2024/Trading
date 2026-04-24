@@ -95,6 +95,10 @@ window.addEventListener('load',()=>{
       } else if (window.Persistence && Persistence.config().url) {
         Persistence.setStatus('Connected. No saved state yet.');
       }
+      if (window.Persistence) {
+        alertLog = await Persistence.loadAlerts();
+        renderAlerts();
+      }
     } catch (err) {
       if (window.Persistence) Persistence.setStatus(`Load failed: ${err.message}`);
     }

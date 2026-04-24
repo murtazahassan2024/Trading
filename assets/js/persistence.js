@@ -1,35 +1,26 @@
 const Persistence = (() => {
-  const CONFIG_KEY = 'signalos-supabase-config';
-  const DEVICE_KEY = 'signalos-device-id';
+  const SHARED_PROFILE_ID = 'signalos-shared-profile';
   const DEFAULT_CONFIG = {
     url: 'https://gyczvzsqvhvaghasktvg.supabase.co',
     anonKey: 'sb_publishable_Ui385rmmnUDiSLxRtuIYEw_3dI7bgxW',
   };
+  let runtimeConfig = { ...DEFAULT_CONFIG };
   let client = null;
   let saveTimer = null;
 
   function deviceId() {
-    let id = localStorage.getItem(DEVICE_KEY);
-    if (!id) {
-      id = crypto.randomUUID ? crypto.randomUUID() : `device-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      localStorage.setItem(DEVICE_KEY, id);
-    }
-    return id;
+    return SHARED_PROFILE_ID;
   }
 
   function config() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
-      return {
-        url: saved.url || DEFAULT_CONFIG.url,
-        anonKey: saved.anonKey || DEFAULT_CONFIG.anonKey,
-      };
-    }
-    catch { return DEFAULT_CONFIG; }
+    return { ...runtimeConfig };
   }
 
   function saveConfig(url, anonKey) {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify({ url, anonKey }));
+    runtimeConfig = {
+      url: url || DEFAULT_CONFIG.url,
+      anonKey: anonKey || DEFAULT_CONFIG.anonKey,
+    };
     setup();
   }
 
@@ -67,6 +58,73 @@ const Persistence = (() => {
     return true;
   }
 
+  async function saveAlert(alert) {
+    if (!client && !setup()) return false;
+    const { error } = await client
+      .from('signalos_alerts')
+      .insert({
+        device_id: deviceId(),
+        trade_id: alert.tradeId || null,
+        symbol: alert.symbol || null,
+        side: alert.side || null,
+        kind: alert.kind || 'trade',
+        status: alert.status || 'open',
+        icon: alert.icon || null,
+        color: alert.color || null,
+        message: alert.text || alert.message,
+        expires_at: alert.expiresAt || null,
+      });
+    if (error) throw error;
+    return true;
+  }
+
+  async function loadAlerts() {
+    if (!client && !setup()) return [];
+    await cleanupExpiredAlerts();
+    const { data, error } = await client
+      .from('signalos_alerts')
+      .select('*')
+      .eq('device_id', deviceId())
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    return (data || []).map(row => ({
+      icon: row.icon || '◉',
+      color: row.color || 'var(--muted)',
+      text: row.message,
+      ts: new Date(row.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' }),
+      persisted: true,
+      tradeId: row.trade_id,
+      kind: row.kind,
+      status: row.status,
+    }));
+  }
+
+  async function markTradeAlertsClosed(tradeId) {
+    if (!client && !setup()) return false;
+    if (!tradeId) return false;
+    const expires = new Date(Date.now() + 3*24*60*60*1000).toISOString();
+    const { error } = await client
+      .from('signalos_alerts')
+      .update({ status: 'closed', expires_at: expires })
+      .eq('device_id', deviceId())
+      .eq('trade_id', tradeId);
+    if (error) throw error;
+    return true;
+  }
+
+  async function cleanupExpiredAlerts() {
+    if (!client && !setup()) return false;
+    const { error } = await client
+      .from('signalos_alerts')
+      .delete()
+      .eq('device_id', deviceId())
+      .not('expires_at', 'is', null)
+      .lt('expires_at', new Date().toISOString());
+    if (error) throw error;
+    return true;
+  }
+
   function saveSoon(stateFactory) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -87,7 +145,7 @@ const Persistence = (() => {
     if (keyEl) keyEl.value = anonKey || '';
   }
 
-  return { config, saveConfig, setup, load, save, saveSoon, setStatus, fillInputs, deviceId };
+  return { config, saveConfig, setup, load, save, saveSoon, saveAlert, loadAlerts, markTradeAlertsClosed, cleanupExpiredAlerts, setStatus, fillInputs, deviceId };
 })();
 
 window.Persistence = Persistence;

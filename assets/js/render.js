@@ -135,12 +135,22 @@ function renderPick(id, row, side) {
   `;
 }
 
-function pushAlert(icon,color,text) {
+function pushAlert(icon,color,text, meta={}) {
   const t=new Date();
   const ts=t.getHours()+':'+(t.getMinutes()+'').padStart(2,'0')+':'+(t.getSeconds()+'').padStart(2,'0');
-  alertLog.unshift({icon,color,text,ts});
+  const alert = {icon,color,text,ts,...meta};
+  alertLog.unshift(alert);
   if(alertLog.length>30)alertLog.pop();
-  document.getElementById('alerts').innerHTML=alertLog.map(a=>`
+  renderAlerts();
+  if (meta.persist && window.Persistence) {
+    Persistence.saveAlert(alert).catch(err => Persistence.setStatus(`Alert save failed: ${err.message}`));
+  }
+}
+
+function renderAlerts() {
+  const el = document.getElementById('alerts');
+  if (!el) return;
+  el.innerHTML=alertLog.map(a=>`
     <div class="ai"><div class="aico" style="color:${a.color}">${a.icon}</div><div class="atx">${a.text}</div><div class="atm">${a.ts}</div></div>`).join('');
 }
 

@@ -1,17 +1,16 @@
 function initTheme() {
-  const saved = localStorage.getItem('signalos-theme');
   const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-  setTheme(saved || (prefersLight ? 'light' : 'dark'));
+  setTheme(prefersLight ? 'light' : 'dark', { persist: false });
 }
 
-function setTheme(theme) {
+function setTheme(theme, options = {}) {
+  const { persist = true } = options;
   const light = theme === 'light';
   document.body.classList.toggle('light', light);
-  localStorage.setItem('signalos-theme', light ? 'light' : 'dark');
   const btn = document.getElementById('theme-toggle');
   if (btn) btn.textContent = light ? 'Dark' : 'Light';
   updateChartTheme();
-  persistAppStateSoon();
+  if (persist) persistAppStateSoon();
 }
 
 function toggleTheme() {
@@ -42,7 +41,7 @@ function applyPersistedState(state) {
   paperLedger = Array.isArray(state.paperLedger) ? state.paperLedger : [];
   paperTrade = state.paperTrade || null;
   autoPaper = !!state.autoPaper;
-  if (state.theme) setTheme(state.theme);
+  if (state.theme) setTheme(state.theme, { persist: false });
   if (state.symbol) document.getElementById('ticker').value = state.symbol;
   if (state.timeframe) document.getElementById('timeframe').value = state.timeframe;
   if (state.accountSize) document.getElementById('acct-size').value = state.accountSize;
@@ -83,7 +82,7 @@ async function connectSupabase() {
     const state = await Persistence.load();
     applyPersistedState(state);
     await saveAppStateNow();
-    Persistence.setStatus(`Connected. Device id: ${Persistence.deviceId().slice(0,8)}...`);
+    Persistence.setStatus('Connected to shared Supabase profile.');
   } catch (err) {
     Persistence.setStatus(`Supabase connect failed: ${err.message}`);
   }
