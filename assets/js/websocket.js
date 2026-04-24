@@ -1,5 +1,6 @@
 let sockets = [];
 let connected = false;
+let activeConnectionId = 0;
 
 function wsBase() {
   return document.getElementById('testnet').checked
@@ -8,11 +9,13 @@ function wsBase() {
 }
 
 function closeAll() {
+  activeConnectionId++;
   sockets.forEach(s=>{try{s.close();}catch(e){}});
   sockets=[];
 }
 
 function openWS(sym,tf) {
+  const connectionId = ++activeConnectionId;
   const s=sym.toLowerCase();
   const streams=`${s}@kline_${tf}/${s}@miniTicker/${s}@depth5@100ms`;
   const url=`${wsBase()}?streams=${streams}`;
@@ -22,6 +25,7 @@ function openWS(sym,tf) {
   sockets.push(sock);
 
   sock.onopen=()=>{
+    if (connectionId !== activeConnectionId) return;
     setStatus('connected');
     connected=true;
     hideOverlay();
@@ -33,6 +37,7 @@ function openWS(sym,tf) {
   };
 
   sock.onmessage=evt=>{
+    if (connectionId !== activeConnectionId) return;
     const {stream,data}=JSON.parse(evt.data);
 
     if(stream.includes('@kline')){
@@ -63,6 +68,7 @@ function openWS(sym,tf) {
       document.getElementById('m-chgsub').textContent=chg>=0?'gaining today':'losing today';
       const vol=parseFloat(data.q);
       document.getElementById('m-vol').textContent='$'+(vol>=1e9?(vol/1e9).toFixed(2)+'B':vol>=1e6?(vol/1e6).toFixed(2)+'M':vol.toFixed(0));
+      if (typeof updatePaperTrade === 'function') updatePaperTrade(p);
     }
 
     if(stream.includes('@depth')){
@@ -70,8 +76,11 @@ function openWS(sym,tf) {
     }
   };
 
-  sock.onerror=()=>setStatus('disconnected');
+  sock.onerror=()=>{
+    if (connectionId === activeConnectionId) setStatus('disconnected');
+  };
   sock.onclose=()=>{
+    if (connectionId !== activeConnectionId) return;
     setStatus('disconnected');
     document.getElementById('cbtn').textContent='Connect';
     document.getElementById('cbtn').classList.remove('live');

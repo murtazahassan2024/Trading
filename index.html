@@ -19,7 +19,10 @@
 <div class="dash">
   <div class="topbar">
     <div class="logo">SIGNAL<span>OS</span><small>FUTURES · LIVE</small></div>
-    <div class="ws-status connecting" id="ws-status"><div class="dot"></div><span id="ws-label">CONNECTING</span></div>
+    <div class="top-actions">
+      <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Toggle light theme">Light</button>
+      <div class="ws-status connecting" id="ws-status"><div class="dot"></div><span id="ws-label">CONNECTING</span></div>
+    </div>
   </div>
 
   <div class="input-row">
@@ -66,6 +69,15 @@
         <div class="sig-word gold" id="sig-word">—</div>
         <div class="sig-conf" id="sig-conf">Awaiting live data...</div>
       </div>
+      <div class="position-plan none" id="position-plan">
+        <div class="plan-side">NO TRADE</div>
+        <div class="plan-grid">
+          <span>Entry</span><strong>—</strong>
+          <span>Stop</span><strong>—</strong>
+          <span>Target</span><strong>—</strong>
+          <span>Why</span><strong>Waiting for signal</strong>
+        </div>
+      </div>
       <div class="sl">Strategy breakdown</div>
       <div id="strat-list" style="display:flex;flex-direction:column;gap:7px">
         <div style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;padding:8px 0;text-align:center">Connecting...</div>
@@ -73,7 +85,51 @@
     </div>
   </div>
 
+  <div class="trade-panel">
+    <div class="ptitle">Paper position <span class="lpill">SIMULATED</span></div>
+    <div class="trade-actions">
+      <button class="trade-btn long-btn" type="button" onclick="openPaperTrade('LONG')">Open Long</button>
+      <button class="trade-btn short-btn" type="button" onclick="openPaperTrade('SHORT')">Open Short</button>
+      <button class="trade-btn flat-btn" type="button" onclick="closePaperTrade('manual')">Close</button>
+    </div>
+    <div class="trade-status" id="trade-status">
+      <div><span>Position</span><strong>FLAT</strong></div>
+      <div><span>P/L</span><strong>—</strong></div>
+      <div><span>Exit signal</span><strong>Waiting</strong></div>
+      <div><span>Rule</span><strong>Open a paper long/short to track it</strong></div>
+    </div>
+  </div>
+
+  <div class="business-panel">
+    <div class="ptitle">Trading operating system <span class="lpill">BASICS</span></div>
+    <div class="business-grid">
+      <div class="biz-card"><strong>Risk unit</strong><span>Decide max loss before entry. A common learning cap is 0.25%-1% of account per trade.</span></div>
+      <div class="biz-card"><strong>R multiple</strong><span>If stop risk is $10 and profit is $20, that is +2R. Track trades in R, not vibes.</span></div>
+      <div class="biz-card"><strong>Win rate vs payoff</strong><span>A 40% win rate can work if wins are much larger than losses. Small wins and huge losses usually break systems.</span></div>
+      <div class="biz-card"><strong>Journal fields</strong><span>Symbol, side, setup, entry, stop, target, exit reason, R result, screenshot, mistake tag.</span></div>
+    </div>
+  </div>
+
   <div class="indic-grid" id="indic-grid"></div>
+
+  <div class="scanner-panel">
+    <div class="ptitle">Market scanner <span class="lpill">MULTI-SYMBOL</span></div>
+    <div class="scanner-picks">
+      <button class="pick-card buy-pick" id="best-buy" type="button">
+        <span class="pick-label">Best long watch</span>
+        <strong>Scanning...</strong>
+        <small>Waiting for candle data</small>
+      </button>
+      <button class="pick-card sell-pick" id="best-sell" type="button">
+        <span class="pick-label">Best short watch</span>
+        <strong>Scanning...</strong>
+        <small>Waiting for candle data</small>
+      </button>
+    </div>
+    <div class="scanner-table" id="scanner-table">
+      <div class="scan-empty">Scanning major USDT pairs...</div>
+    </div>
+  </div>
 
   <div class="ob-strip">
     <div class="ob-panel">
@@ -96,6 +152,11 @@
   <div class="books-panel">
     <div class="ptitle">Strategies from the books</div>
     <div class="book-grid" id="books"></div>
+  </div>
+
+  <div class="disclaimer">
+    Live data: Binance Futures Perpetual WebSocket.<br>
+    Strategy inputs: Murphy trend/momentum · Douglas discipline/risk · Nison candles · Miner momentum retrace · ATR/ADX regime filtering
   </div>
 </div>
 </body>
