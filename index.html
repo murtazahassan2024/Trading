@@ -168,7 +168,12 @@
       <div><span>Position</span><strong>FLAT</strong></div>
       <div><span>P/L</span><strong>—</strong></div>
       <div><span>Exit signal</span><strong>Waiting</strong></div>
+      <div><span>Mode</span><strong>—</strong></div>
       <div><span>Rule</span><strong>Open a paper long/short to track it</strong></div>
+    </div>
+    <div class="ptitle open-trades-title">Open trades</div>
+    <div class="open-trades-table" id="open-paper-trades">
+      <div class="scan-empty">No open paper trades yet.</div>
     </div>
   </div>
 
@@ -189,6 +194,10 @@
 
   <div class="ledger-panel">
     <div class="ptitle">Paper trading ledger</div>
+    <div class="ledger-actions">
+      <label class="ledger-select-all"><input type="checkbox" id="ledger-select-all" onchange="toggleLedgerSelection(this.checked)"/> Select all</label>
+      <button class="small-btn danger-btn" type="button" onclick="deleteSelectedLedgerTrades()">Delete selected</button>
+    </div>
     <div class="ledger-table" id="paper-ledger">
       <div class="scan-empty">Closed paper trades will appear here.</div>
     </div>

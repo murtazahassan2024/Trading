@@ -62,7 +62,7 @@ async function fetchCoinbaseKlines(search) {
   const symbol = params.get('symbol') || 'BTCUSDT';
   const interval = params.get('interval') || '5m';
   const limit = Math.min(Number(params.get('limit') || 200), 300);
-  const base = symbol.replace(/(USDT|USDC|BUSD)$/,'') || 'BTC';
+  const base = symbol.replace(/(USDT|USDC|BUSD)$/,'').replace(/^1000/, '') || 'BTC';
   const product = `${base}-USD`;
   const granularity = GRANULARITY[interval] || 300;
   const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`;

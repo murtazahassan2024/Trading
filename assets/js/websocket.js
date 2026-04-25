@@ -66,7 +66,7 @@ function openWS(sym,tf) {
       document.getElementById('m-chgsub').textContent=chg>=0?'gaining today':'losing today';
       const vol=parseFloat(data.q);
       document.getElementById('m-vol').textContent='$'+(vol>=1e9?(vol/1e9).toFixed(2)+'B':vol>=1e6?(vol/1e6).toFixed(2)+'M':vol.toFixed(0));
-      if (typeof updatePaperTrade === 'function') updatePaperTrade(p);
+      if (typeof updatePaperTrades === 'function') updatePaperTrades(p);
     }
 
     if(stream.includes('@depth')){

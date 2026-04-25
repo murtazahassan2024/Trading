@@ -6,7 +6,7 @@ function runAnalysis() {
   const sr=strategies(ind);
   if(sr) sr.plan = positionPlan(ind, sr);
   renderSignals(sr);
-  updatePaperTrade(ind.last, sr);
+  updatePaperTrades(ind.last, sr);
   maybeAutoPaper();
   if(!sr)return;
   const {rsi:r}=ind, {cons}=sr;

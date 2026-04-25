@@ -35,7 +35,12 @@ function syncPaperTradeSelection() {
 
 const K = { o:[], h:[], l:[], c:[], v:[], t:[], labels:[] };
 const MAX = 200;
-const SCAN_SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','LINKUSDT','AVAXUSDT','LTCUSDT'];
+const SCAN_SYMBOLS = [
+  'BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','LINKUSDT','AVAXUSDT','LTCUSDT',
+  'SUIUSDT','APTUSDT','NEARUSDT','OPUSDT','ARBUSDT','INJUSDT','SEIUSDT','WIFUSDT',
+  '1000PEPEUSDT','1000BONKUSDT','1000SHIBUSDT','TIAUSDT','WLDUSDT','ENAUSDT',
+  'FILUSDT','DOTUSDT','UNIUSDT','AAVEUSDT','ATOMUSDT'
+];
 
 const BOOKS = [
   {title:'Technical Analysis of the Financial Markets', author:'J. Murphy', strat:'Trend + momentum', color:'#00e5a0'},
