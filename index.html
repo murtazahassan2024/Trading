@@ -16,8 +16,10 @@
 <script src="assets/js/charts.js" defer></script>
 <script src="assets/js/render.js" defer></script>
 <script src="assets/js/scanner.js" defer></script>
+<script src="assets/js/ai.js" defer></script>
 <script src="assets/js/paper.js" defer></script>
 <script src="assets/js/backtest.js" defer></script>
+<script src="assets/js/broker.js" defer></script>
 <script src="assets/js/websocket.js" defer></script>
 <script src="assets/js/app.js" defer></script>
 </head>
@@ -156,6 +158,22 @@
     </div>
   </div>
 
+  <div class="ai-panel">
+    <div class="ptitle">AI market coach <span class="lpill">SERVER</span></div>
+    <div class="ai-actions">
+      <button class="small-btn" type="button" onclick="runAIMarketBrief()">Analyze market scanner</button>
+      <span id="ai-provider-state">Uses server-side API key only.</span>
+    </div>
+    <div class="ai-brief-grid" id="ai-brief">
+      <div><span>Headline</span><strong>Waiting for AI analysis...</strong></div>
+      <div><span>Regime</span><strong>—</strong></div>
+      <div><span>Opportunity</span><strong>—</strong></div>
+      <div><span>Risk</span><strong>—</strong></div>
+      <div><span>Action</span><strong>—</strong></div>
+      <div><span>Confidence</span><strong>—</strong></div>
+    </div>
+  </div>
+
   <div class="trade-panel">
     <div class="ptitle">Paper position <span class="lpill">SIMULATED</span></div>
     <div class="trade-actions">
@@ -175,6 +193,30 @@
     <div class="open-trades-table" id="open-paper-trades">
       <div class="scan-empty">No open paper trades yet.</div>
     </div>
+    <div class="trade-detail" id="trade-detail" hidden>
+      <div class="trade-detail-head">
+        <div>
+          <span>Selected trade</span>
+          <strong id="td-title">—</strong>
+        </div>
+        <button class="small-btn" type="button" id="td-open-chart">Open Chart</button>
+      </div>
+      <div class="trade-detail-grid">
+        <div><span>Opened</span><strong id="td-opened">—</strong></div>
+        <div><span>Entry</span><strong id="td-entry">—</strong></div>
+        <div><span>Current</span><strong id="td-current">—</strong></div>
+        <div><span>P/L</span><strong id="td-pnl">—</strong></div>
+        <div><span>Amount at entry</span><strong id="td-entry-value">—</strong></div>
+        <div><span>Current value</span><strong id="td-current-value">—</strong></div>
+        <div><span>Qty</span><strong id="td-qty">—</strong></div>
+        <div><span>Risk</span><strong id="td-risk">—</strong></div>
+        <div><span>Stop</span><strong id="td-stop">—</strong></div>
+        <div><span>Target</span><strong id="td-target">—</strong></div>
+      </div>
+      <div class="trade-detail-chart">
+        <canvas id="tradeDetailChart"></canvas>
+      </div>
+    </div>
   </div>
 
   <div class="backtest-panel">
@@ -182,6 +224,8 @@
     <div class="backtest-actions">
       <button class="small-btn" type="button" onclick="runBacktest()">Run Current Symbol</button>
       <button class="small-btn" type="button" onclick="runScannerBacktests()">Run Scanner Set</button>
+      <label>Slippage %<input id="bt-slip" type="number" value="0.04" min="0" max="2" step="0.01"/></label>
+      <label>Max bars<input id="bt-bars" type="number" value="24" min="3" max="96" step="1"/></label>
     </div>
     <div class="backtest-grid" id="backtest-results">
       <div><span>Trades</span><strong>—</strong></div>
@@ -189,6 +233,71 @@
       <div><span>Profit factor</span><strong>—</strong></div>
       <div><span>Max drawdown</span><strong>—</strong></div>
       <div><span>Total R</span><strong>—</strong></div>
+    </div>
+  </div>
+
+  <div class="readiness-panel">
+    <div class="ptitle">Live readiness <span class="lpill">SIMULATOR</span></div>
+    <div class="backtest-actions">
+      <button class="small-btn" type="button" onclick="runLiveReadiness()">Check Readiness</button>
+      <button class="small-btn" type="button" onclick="simulateExecution()">Simulate Execution</button>
+      <label>Daily max loss %<input id="daily-loss-limit" type="number" value="2" min="0.1" max="10" step="0.1"/></label>
+      <label>Max open<input id="live-max-open" type="number" value="3" min="1" max="10" step="1"/></label>
+      <label>Sim slippage %<input id="exec-slip" type="number" value="0.05" min="0" max="2" step="0.01"/></label>
+    </div>
+    <div class="readiness-status" id="readiness-status">
+      <strong>NOT READY FOR LIVE MONEY</strong>
+      <span>Run checks after backtesting and paper trading.</span>
+    </div>
+    <div class="readiness-grid" id="readiness-grid">
+      <div><span>Broker execution</span><strong>Blocked</strong><em>No live broker adapter connected.</em></div>
+    </div>
+    <div class="sim-grid" id="execution-sim">
+      <div><span>Order</span><strong>—</strong></div>
+      <div><span>Est. fill</span><strong>—</strong></div>
+      <div><span>Qty</span><strong>—</strong></div>
+      <div><span>Notional</span><strong>—</strong></div>
+      <div><span>Fees</span><strong>—</strong></div>
+      <div><span>Worst planned loss</span><strong>—</strong></div>
+    </div>
+    <div class="forward-grid" id="forward-test-results">
+      <div><span>Forward trades</span><strong>—</strong></div>
+      <div><span>Forward win rate</span><strong>—</strong></div>
+      <div><span>Forward PF</span><strong>—</strong></div>
+      <div><span>Expectancy</span><strong>—</strong></div>
+      <div><span>Max drawdown</span><strong>—</strong></div>
+      <div><span>Status</span><strong>Need data</strong></div>
+    </div>
+  </div>
+
+  <div class="broker-panel">
+    <div class="ptitle">Alpaca paper broker <span class="lpill">PAPER ONLY</span></div>
+    <div class="backtest-actions">
+      <button class="small-btn" type="button" onclick="syncAlpacaBroker()">Sync Alpaca</button>
+      <button class="small-btn" type="button" onclick="previewAlpacaOrder()">Preview Order</button>
+      <button class="small-btn danger-btn" type="button" onclick="submitAlpacaPaperOrder()">Submit Paper Order</button>
+      <button class="small-btn danger-btn" type="button" onclick="killSwitch()">Kill Switch</button>
+      <label>Broker symbol<input id="alpaca-symbol" value="BTC/USD"/></label>
+      <label>Qty<input id="alpaca-qty" type="number" value="0.001" min="0.000001" step="0.000001"/></label>
+    </div>
+    <div class="readiness-status" id="alpaca-status">
+      <strong>NOT CONNECTED</strong>
+      <span>Add Alpaca paper keys to .env, then restart.</span>
+    </div>
+    <div class="sim-grid" id="alpaca-account">
+      <div><span>Equity</span><strong>—</strong></div>
+      <div><span>Buying power</span><strong>—</strong></div>
+      <div><span>Status</span><strong>—</strong></div>
+      <div><span>Open orders</span><strong>—</strong></div>
+    </div>
+    <div class="mini-result" id="alpaca-preview">Paper broker is separate from Binance Futures scanner. Confirm symbol and size before submitting.</div>
+    <div class="mini-result" id="alpaca-symbol-state">Symbol mapper will validate against Alpaca before submitting.</div>
+    <div class="ledger-table" id="alpaca-positions">
+      <div class="scan-empty">Alpaca paper positions will appear here.</div>
+    </div>
+    <div class="ptitle open-trades-title">Alpaca order lifecycle</div>
+    <div class="ledger-table" id="alpaca-orders">
+      <div class="scan-empty">Open/recent Alpaca paper orders will appear here.</div>
     </div>
   </div>
 
@@ -217,6 +326,11 @@
 
   <div class="scanner-panel">
     <div class="ptitle">Market scanner <span class="lpill">MULTI-SYMBOL</span></div>
+    <div class="scanner-controls">
+      <button class="small-btn scout-btn" id="auto-scout-btn" type="button" onclick="toggleAutoScout()">Auto Scout: Off</button>
+      <label>Max open<input id="auto-scout-max" type="number" value="3" min="1" max="8" step="1" onchange="persistAppStateSoon()"/></label>
+      <label>Min conf<input id="auto-scout-conf" type="number" value="65" min="50" max="95" step="1" onchange="persistAppStateSoon()"/></label>
+    </div>
     <div class="scanner-picks">
       <button class="pick-card buy-pick" id="best-buy" type="button">
         <span class="pick-label">Best long watch</span>

@@ -153,7 +153,7 @@ function updateChartTheme() {
   chart.options.scales.y.ticks.color = muted;
   chart.options.scales.y.grid.color = grid;
   chart.update('none');
-  [volumeChart,rsiChart,macdChart].forEach(c=>{
+  [volumeChart,rsiChart,macdChart,tradeDetailChart].forEach(c=>{
     if(!c) return;
     c.options.plugins.tooltip.backgroundColor=surface2;
     c.options.plugins.tooltip.borderColor=border;
@@ -168,7 +168,8 @@ function syncTradeChartLines() {
   if (!chart) return;
   const len = chart.data.labels.length;
   const empty = new Array(len).fill(null);
-  chart.data.datasets[1].data = paperTrade ? new Array(len).fill(paperTrade.entry) : empty;
-  chart.data.datasets[2].data = paperTrade ? new Array(len).fill(paperTrade.stop) : empty;
-  chart.data.datasets[3].data = paperTrade ? new Array(len).fill(paperTrade.target) : empty;
+  const visibleTrade = paperTrade && paperTrade.symbol === currentSymbol() ? paperTrade : null;
+  chart.data.datasets[1].data = visibleTrade ? new Array(len).fill(visibleTrade.entry) : empty;
+  chart.data.datasets[2].data = visibleTrade ? new Array(len).fill(visibleTrade.stop) : empty;
+  chart.data.datasets[3].data = visibleTrade ? new Array(len).fill(visibleTrade.target) : empty;
 }

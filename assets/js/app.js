@@ -104,6 +104,7 @@ window.addEventListener('load',()=>{
     }
     renderLedger();
     renderRiskDashboard();
+    if (typeof runLiveReadiness === 'function') runLiveReadiness();
     toggleConnect();
   })();
 });

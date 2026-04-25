@@ -243,7 +243,7 @@ function compute() {
 
 function strategies(ind) {
   if (!ind) return null;
-  const {rsi:r,macd:m,stochRsi:sr,obv:ob,ema50above:e50,ema200above:e200,goldenCross:gc,adx:ax,candle,structure,volRatio,ema50Slope,risk} = ind;
+  const {rsi:r,macd:m,bb:b,stochRsi:sr,obv:ob,ema50above:e50,ema200above:e200,goldenCross:gc,adx:ax,candle,structure,volRatio,ema50Slope,risk} = ind;
   const trending=ax!==null&&ax>=22;
   const strongTrend=ax!==null&&ax>=28;
   const volumeOk=volRatio===null||volRatio>=.85;
@@ -257,6 +257,8 @@ function strategies(ind) {
   const miner = e50&&sr!==null&&sr<35&&r>42&&m&&m.bullish?'BUY':!e50&&sr!==null&&sr>65&&r<58&&m&&!m.bullish?'SELL':'HOLD';
   const triple = e200&&m&&m.bullish&&r>48?'BUY':(!e200&&m&&!m.bullish&&r<52)?'SELL':'HOLD';
   const trend = gc&&strongTrend&&ob.rising?'BUY':gc===false&&strongTrend&&!ob.rising?'SELL':'HOLD';
+  const bollinger = b&&b.pct<30&&r>42&&m&&m.bullish?'BUY':b&&b.pct>70&&r<58&&m&&!m.bullish?'SELL':'HOLD';
+  const bulkowski = structure&&volRatio>=1.15&&structure.rangePct>78&&r>52?'BUY':structure&&volRatio>=1.15&&structure.rangePct<22&&r<48?'SELL':'HOLD';
 
   const list = [
     {name:'Trend + momentum',author:'Murphy',signal:murphy,strat:'Trend + momentum',weight:1.3},
@@ -264,7 +266,9 @@ function strategies(ind) {
     {name:'Candle reversal',author:'Nison',signal:nison,strat:'Candle reversal',weight:1},
     {name:'Momentum retrace',author:'Miner',signal:miner,strat:'Momentum retrace',weight:1.2},
     {name:'Triple Screen',author:'Elder',signal:triple,strat:'Triple Screen',weight:1},
-    {name:'Trend Follow',author:'Schwager',signal:trend,strat:'Trend Follow',weight:1.1}
+    {name:'Trend Follow',author:'Schwager',signal:trend,strat:'Trend Follow',weight:1.1},
+    {name:'Band + momentum',author:'Bollinger',signal:bollinger,strat:'Band + momentum',weight:1},
+    {name:'Pattern breakout',author:'Bulkowski',signal:bulkowski,strat:'Pattern breakout',weight:1}
   ];
 
   const buys=list.filter(s=>s.signal==='BUY').reduce((a,s)=>a+s.weight,0);

@@ -29,6 +29,21 @@ function tradeRiskMultiple(trade, price) {
     : (trade.entry-price) / riskPerUnit;
 }
 
+function tradeSizingSnapshot(entry, stop) {
+  const {account, riskPct, feePct} = accountInputs();
+  const riskDollars = account * riskPct / 100;
+  const stopDistance = Math.abs(entry-stop);
+  const qty = stopDistance > 0 ? riskDollars / stopDistance : 0;
+  const notional = qty * entry;
+  return { accountSize: account, riskPct, feePct, riskDollars, qty, notional };
+}
+
+function tradeSizingFor(trade) {
+  if (!trade) return null;
+  if (Number.isFinite(trade.qty) && Number.isFinite(trade.notional)) return trade;
+  return tradeSizingSnapshot(trade.entry, trade.stop);
+}
+
 function tradeClosePrice(trade) {
   if (!trade) return null;
   if (trade.symbol === currentSymbol()) {
@@ -42,9 +57,11 @@ function tradeClosePrice(trade) {
 function selectPaperTrade(tradeId) {
   activeTradeId = tradeId;
   const trade = syncPaperTradeSelection();
+  if (typeof syncAlpacaSymbol === 'function') syncAlpacaSymbol();
   syncTradeChartLines();
   if (chart) chart.update('none');
   renderOpenTrades();
+  renderTradeDetail(true);
   if (trade) {
     const price = tradeClosePrice(trade);
     const exit = exitSignalForTrade(trade, price, lastSignalSnapshot);
@@ -53,12 +70,14 @@ function selectPaperTrade(tradeId) {
     renderTradeStatus(null, null, 'Waiting', 'Open a paper long/short to track it');
   }
   renderRiskDashboard();
+  if (typeof previewAlpacaOrder === 'function') previewAlpacaOrder();
   persistAppStateSoon();
 }
 
-function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
+function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options={}) {
   if (!ind || !ind.risk || !Number.isFinite(current)) return false;
-  const symbol = currentSymbol();
+  const symbol = options.symbol || currentSymbol();
+  const activate = options.activate !== false;
   const isLong = side === 'LONG';
   if (mode === 'auto' && paperTrades.some(trade => trade.symbol === symbol)) return false;
   const newTrade = {
@@ -72,10 +91,11 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
     entrySignal: plan?.side || 'NO TRADE',
     mode,
     lastExitStatus: null,
-    lastPrice: current
+    lastPrice: current,
+    ...tradeSizingSnapshot(current, isLong ? ind.risk.longStop : ind.risk.shortStop)
   };
   paperTrades.unshift(newTrade);
-  activeTradeId = newTrade.tradeId;
+  if (activate || !activeTradeId) activeTradeId = newTrade.tradeId;
   paperTrade = syncPaperTradeSelection();
   syncTradeChartLines();
   if (chart) chart.update('none');
@@ -88,6 +108,7 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual') {
     status:'open'
   });
   renderOpenTrades();
+  renderTradeDetail(true);
   updatePaperTrades(current, lastSignalSnapshot);
   renderRiskDashboard();
   persistAppStateSoon();
@@ -127,6 +148,7 @@ function closePaperTrade(reason='manual', tradeId = activeTradeId) {
   syncTradeChartLines();
   if (chart) chart.update('none');
   renderOpenTrades();
+  renderTradeDetail(true);
   if (paperTrade) {
     const price = tradeClosePrice(paperTrade);
     const exit = exitSignalForTrade(paperTrade, price, lastSignalSnapshot);
@@ -136,6 +158,7 @@ function closePaperTrade(reason='manual', tradeId = activeTradeId) {
   }
   renderLedger();
   renderRiskDashboard();
+  if (typeof runLiveReadiness === 'function') runLiveReadiness();
   persistAppStateSoon();
 }
 
@@ -176,6 +199,7 @@ function updatePaperTrades(price, sr=null) {
     const exit = exitSignalForTrade(trade, price, sr);
     if (trade.tradeId === activeTradeId) {
       renderTradeStatus(trade, computeTradePnl(trade, price), exit.status, exit.rule);
+      renderTradeDetail(false);
     }
     if (exit.status !== 'HOLD') {
       if (trade.lastExitStatus !== exit.status) {
@@ -259,6 +283,107 @@ function renderOpenTrades() {
   }).join('');
 }
 
+function formatTradeOpenedAt(openedAt) {
+  if (!openedAt) return '—';
+  const opened = new Date(openedAt);
+  if (Number.isNaN(opened.getTime())) return '—';
+  const mins = Math.max(0, Math.floor((Date.now() - opened.getTime()) / 60000));
+  const age = mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
+  return `${opened.toLocaleString()} · ${age}`;
+}
+
+function setTradeDetailText(id, value, color = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value;
+  el.style.color = color;
+}
+
+function renderTradeDetail(refreshChart = false) {
+  const panel = document.getElementById('trade-detail');
+  if (!panel) return;
+  const trade = syncPaperTradeSelection();
+  if (!trade) {
+    panel.hidden = true;
+    if (tradeDetailChart) {
+      tradeDetailChart.destroy();
+      tradeDetailChart = null;
+    }
+    return;
+  }
+  panel.hidden = false;
+  const price = tradeClosePrice(trade);
+  const pnl = computeTradePnl(trade, price);
+  const rMultiple = tradeRiskMultiple(trade, price);
+  const sizing = tradeSizingFor(trade);
+  const qty = Number.isFinite(sizing?.qty) ? sizing.qty : null;
+  const entryValue = Number.isFinite(sizing?.notional) ? sizing.notional : null;
+  const currentValue = qty !== null && Number.isFinite(price) ? qty * price : null;
+  const riskDollars = Number.isFinite(sizing?.riskDollars) ? sizing.riskDollars : null;
+  const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--accent2)';
+
+  setTradeDetailText('td-title', `${trade.side} ${trade.symbol} · ${trade.mode === 'auto' ? 'AUTO' : 'MANUAL'}`);
+  setTradeDetailText('td-opened', formatTradeOpenedAt(trade.openedAt));
+  setTradeDetailText('td-entry', fmtPrice(trade.entry));
+  setTradeDetailText('td-current', Number.isFinite(price) ? fmtPrice(price) : '—');
+  setTradeDetailText('td-pnl', pnl === null ? '—' : `${pnl.toFixed(2)}% · ${rMultiple.toFixed(2)}R`, pnl === null ? '' : pnlColor);
+  setTradeDetailText('td-entry-value', entryValue === null ? '—' : `$${entryValue.toFixed(2)}`);
+  setTradeDetailText('td-current-value', currentValue === null ? '—' : `$${currentValue.toFixed(2)}`, currentValue !== null && entryValue !== null ? pnlColor : '');
+  setTradeDetailText('td-qty', qty === null ? '—' : qty.toFixed(5));
+  setTradeDetailText('td-risk', riskDollars === null ? '—' : `$${riskDollars.toFixed(2)} · ${trade.riskPct ?? sizing?.riskPct ?? '—'}%`);
+  setTradeDetailText('td-stop', fmtPrice(trade.stop));
+  setTradeDetailText('td-target', fmtPrice(trade.target));
+
+  const chartBtn = document.getElementById('td-open-chart');
+  if (chartBtn) chartBtn.onclick = () => selectSymbol(trade.symbol);
+  if (refreshChart) renderTradeDetailChart(trade);
+}
+
+async function renderTradeDetailChart(trade) {
+  const canvas = document.getElementById('tradeDetailChart');
+  if (!canvas || !trade) return;
+  const token = ++tradeDetailChartToken;
+  let labels = [];
+  let closes = [];
+  try {
+    if (trade.symbol === currentSymbol() && K.c.length) {
+      labels = K.labels.slice(-100);
+      closes = K.c.slice(-100);
+    } else {
+      const tf = document.getElementById('timeframe')?.value || '5m';
+      const data = await fetchKlineData(trade.symbol, tf, 120);
+      if (token !== tradeDetailChartToken || trade.tradeId !== activeTradeId) return;
+      labels = data.map(k => {
+        const d = new Date(k[0]);
+        return d.getHours()+':'+(d.getMinutes()+'').padStart(2,'0');
+      });
+      closes = data.map(k => +k[4]);
+    }
+  } catch (error) {
+    pushAlert('!', '#f5c842', `Could not load detail chart for ${trade.symbol}`);
+    return;
+  }
+  if (!labels.length || !closes.length) return;
+  const line = value => new Array(labels.length).fill(value);
+  const datasets = [
+    {label:'Price',data:closes,borderColor:cssVar('--accent3'),borderWidth:1.8,pointRadius:0,tension:.18},
+    {label:'Entry',data:line(trade.entry),borderColor:'#f5c842',borderWidth:1,borderDash:[5,5],pointRadius:0},
+    {label:'Stop',data:line(trade.stop),borderColor:'#ff4d6d',borderWidth:1,borderDash:[4,4],pointRadius:0},
+    {label:'Target',data:line(trade.target),borderColor:'#00e5a0',borderWidth:1,borderDash:[4,4],pointRadius:0}
+  ];
+  if (!tradeDetailChart) {
+    tradeDetailChart = new Chart(canvas, {
+      type:'line',
+      data:{labels,datasets},
+      options:baseMiniChartOptions()
+    });
+  } else {
+    tradeDetailChart.data.labels = labels;
+    tradeDetailChart.data.datasets = datasets;
+    tradeDetailChart.update('none');
+  }
+}
+
 function renderLedger() {
   const el = document.getElementById('paper-ledger');
   if (!el) return;
@@ -296,6 +421,7 @@ function deleteSelectedLedgerTrades() {
   paperLedger = paperLedger.filter((trade, index) => !selected.includes(trade.tradeId || `ledger-${index}`));
   renderLedger();
   renderRiskDashboard();
+  if (typeof runLiveReadiness === 'function') runLiveReadiness();
   persistAppStateSoon();
   pushAlert('■', '#ff4d6d', `Deleted ${selected.length} closed paper trade${selected.length === 1 ? '' : 's'} from ledger.`);
 }

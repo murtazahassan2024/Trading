@@ -29,6 +29,9 @@ function collectPersistedState() {
     paperLedger,
     paperTrade,
     autoPaper,
+    autoScout,
+    autoScoutMax: document.getElementById('auto-scout-max')?.value || '3',
+    autoScoutMinConf: document.getElementById('auto-scout-conf')?.value || '65',
     theme: document.body.classList.contains('light') ? 'light' : 'dark',
     symbol: document.getElementById('ticker')?.value || 'BTCUSDT',
     timeframe: document.getElementById('timeframe')?.value || '5m',
@@ -47,17 +50,21 @@ function applyPersistedState(state) {
   syncPaperTradeSelection();
   paperLedger = Array.isArray(state.paperLedger) ? state.paperLedger : [];
   autoPaper = !!state.autoPaper;
+  autoScout = !!state.autoScout;
   if (state.theme) setTheme(state.theme, { persist: false });
   if (state.symbol) document.getElementById('ticker').value = state.symbol;
   if (state.timeframe) document.getElementById('timeframe').value = state.timeframe;
   if (state.accountSize) document.getElementById('acct-size').value = state.accountSize;
   if (state.riskPct) document.getElementById('risk-pct').value = state.riskPct;
   if (state.feePct) document.getElementById('fee-pct').value = state.feePct;
+  if (state.autoScoutMax && document.getElementById('auto-scout-max')) document.getElementById('auto-scout-max').value = state.autoScoutMax;
+  if (state.autoScoutMinConf && document.getElementById('auto-scout-conf')) document.getElementById('auto-scout-conf').value = state.autoScoutMinConf;
   const btn = document.getElementById('auto-paper-btn');
   if (btn) {
     btn.textContent = `Auto Paper: ${autoPaper ? 'On' : 'Off'}`;
     btn.classList.toggle('active', autoPaper);
   }
+  syncAutoScoutButton();
   renderOpenTrades();
   if (paperTrade) {
     const price = Number.isFinite(paperTrade.lastPrice) ? paperTrade.lastPrice : paperTrade.entry;
@@ -66,9 +73,11 @@ function applyPersistedState(state) {
   } else {
     renderTradeStatus(null, null, 'Waiting', 'Open a paper long/short to track it');
   }
+  renderTradeDetail(true);
   renderLedger();
   renderRiskDashboard();
   renderPositionSizing();
+  if (typeof runLiveReadiness === 'function') runLiveReadiness();
 }
 
 function persistAppStateSoon() {

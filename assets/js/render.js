@@ -157,6 +157,11 @@ function renderAlerts() {
 function renderOB(asks,bids) {
   const top=8;
   const ta=asks.slice(0,top), tb=bids.slice(0,top);
+  if (!ta.length || !tb.length) {
+    document.getElementById('ob-asks').innerHTML='<div style="font-size:11px;color:var(--muted);font-family:\'Space Mono\',monospace">Waiting for order book...</div>';
+    document.getElementById('ob-bids').innerHTML='<div style="font-size:11px;color:var(--muted);font-family:\'Space Mono\',monospace">Waiting for order book...</div>';
+    return;
+  }
   const ma=Math.max(...ta.map(r=>parseFloat(r[1])));
   const mb=Math.max(...tb.map(r=>parseFloat(r[1])));
   document.getElementById('ob-asks').innerHTML=ta.map(r=>{

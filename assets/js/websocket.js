@@ -10,6 +10,18 @@ function closeAll() {
   activeConnectionId++;
   sockets.forEach(s=>{try{s.close();}catch(e){}});
   sockets=[];
+  connected=false;
+  if(fundingTimer)clearInterval(fundingTimer);
+  if(scanTimer)clearInterval(scanTimer);
+  fundingTimer=null;
+  scanTimer=null;
+  setStatus('disconnected');
+  hideOverlay();
+  const btn=document.getElementById('cbtn');
+  if(btn){
+    btn.textContent='Connect';
+    btn.classList.remove('live');
+  }
 }
 
 function openWS(sym,tf) {
@@ -70,7 +82,7 @@ function openWS(sym,tf) {
     }
 
     if(stream.includes('@depth')){
-      renderOB(data.asks||[],data.bids||[]);
+      renderOB(data.asks||data.a||[],data.bids||data.b||[]);
     }
   };
 

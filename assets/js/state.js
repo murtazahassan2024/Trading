@@ -3,6 +3,8 @@ let chart = null;
 let volumeChart = null;
 let rsiChart = null;
 let macdChart = null;
+let tradeDetailChart = null;
+let tradeDetailChartToken = 0;
 let alertLog = [];
 let lastRSI = null, lastCons = null;
 let fundingTimer = null;
@@ -11,8 +13,11 @@ let paperTrade = null;
 let paperTrades = [];
 let paperLedger = [];
 let autoPaper = false;
+let autoScout = false;
+let lastScoutActionAt = 0;
 let lastAutoActionAt = 0;
 let lastSignalSnapshot = null;
+let lastScannerRows = [];
 let audioCtx = null;
 let activeTradeId = null;
 
@@ -48,5 +53,7 @@ const BOOKS = [
   {title:'Japanese Candlestick Charting Techniques', author:'S. Nison', strat:'Candle reversal', color:'#f5c842'},
   {title:'High Probability Trading Strategies', author:'R. Miner', strat:'Momentum retrace', color:'#ff4d6d'},
   {title:'Trading for a Living', author:'A. Elder', strat:'Triple Screen', color:'#00c2ff'},
-  {title:'Market Wizards', author:'J. Schwager', strat:'Trend Follow', color:'#ff9f40'}
+  {title:'Market Wizards', author:'J. Schwager', strat:'Trend Follow', color:'#ff9f40'},
+  {title:'Bollinger on Bollinger Bands', author:'J. Bollinger', strat:'Band + momentum', color:'#38bdf8'},
+  {title:'Encyclopedia of Chart Patterns', author:'T. Bulkowski', strat:'Pattern breakout', color:'#22c55e'}
 ];
