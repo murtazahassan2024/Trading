@@ -335,6 +335,25 @@ async function alpacaApi(req, res, url) {
       });
       return;
     }
+    if (url.pathname === '/api/alpaca/positions/close-all' && req.method === 'POST') {
+      const result = await alpacaRequest('/v2/positions?cancel_orders=true', { method: 'DELETE' });
+      send(res, 200, JSON.stringify(result || []), {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      return;
+    }
+    if (url.pathname === '/api/alpaca/positions/close' && req.method === 'POST') {
+      const body = await readJson(req);
+      const symbol = String(body.symbol || '').trim().toUpperCase();
+      if (!symbol) throw new Error('Position symbol is required.');
+      const result = await alpacaRequest(`/v2/positions/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+      send(res, 200, JSON.stringify(result || {}), {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      return;
+    }
     if (url.pathname === '/api/alpaca/orders' && req.method === 'POST') {
       const body = await readJson(req);
       const symbol = String(body.symbol || '').trim().toUpperCase();
@@ -449,7 +468,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const server = http.createServer((req, res) => {
+function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/api/ai/market-brief' && req.method === 'POST') {
     aiMarketBrief(req, res);
@@ -464,8 +483,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   serveStatic(req, res, url.pathname);
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`SignalOS running at http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const server = http.createServer(requestHandler);
+  server.listen(PORT, () => {
+    console.log(`SignalOS running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { requestHandler };

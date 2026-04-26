@@ -43,6 +43,13 @@ function compactScannerRow(row) {
     price: row.price,
     longScore: row.longScore,
     shortScore: row.shortScore,
+    quality: row.quality ? {
+      score: row.quality.score,
+      expectedValueR: row.quality.expectedValueR,
+      probability: row.quality.probability,
+      autoPass: row.quality.autoPass,
+      blockers: row.quality.blockers,
+    } : null,
   };
 }
 
@@ -90,6 +97,7 @@ function aiMarketContext() {
       reason: trade.reason,
       rMultiple: trade.rMultiple,
       pnl: trade.pnl,
+      entryQuality: trade.entrySnapshot?.quality || null,
     })),
   };
 }

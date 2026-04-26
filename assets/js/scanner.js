@@ -26,6 +26,7 @@ async function scanMarkets() {
       const ind=computeSeries(s.o,s.h,s.l,s.c,s.v);
       const sr=strategies(ind);
       const plan=positionPlan(ind, sr);
+      const quality=tradeQuality(ind, sr, plan.side);
       const longScore=sr.buyScore-sr.sellScore;
       const shortScore=sr.sellScore-sr.buyScore;
       return {
@@ -40,8 +41,10 @@ async function scanMarkets() {
         regime:sr.trending?'trend':'range',
         risk:ind.risk?`risk ${ind.risk.riskPct}%`:'risk —',
         riskPct: ind.risk?.riskPct ?? null,
+        quality,
         price:ind.last,
         ind,
+        sr,
         plan
       };
     } catch(e) {
@@ -83,13 +86,16 @@ function maybeAutoScout(rows) {
   const ranked = rows
     .filter(r => !r.error && (r.side === 'LONG' || r.side === 'SHORT'))
     .filter(r => r.conf >= minConf && r.riskPct !== null && r.riskPct <= 1.1)
+    .filter(r => r.quality?.autoPass)
     .filter(r => !paperTrades.some(trade => trade.symbol === r.symbol))
-    .sort((a,b) => Math.max(b.longScore,b.shortScore)-Math.max(a.longScore,a.shortScore))
+    .sort((a,b) => (b.quality?.score || 0)-(a.quality?.score || 0))
     .slice(0, slots);
   ranked.forEach(row => {
     const opened = openPaperTradeFromPlan(row.side, row.price, row.ind, row.plan, 'auto', {
       symbol: row.symbol,
-      activate: row.symbol === currentSymbol()
+      activate: row.symbol === currentSymbol(),
+      signalSnapshot: row.sr,
+      source: 'scanner'
     });
     if (opened) {
       pushAlert(row.side === 'LONG' ? '▲' : '▼', row.side === 'LONG' ? '#00e5a0' : '#ff4d6d', `Auto scout opened ${row.side} ${row.symbol} from scanner confidence ${row.conf}%`);

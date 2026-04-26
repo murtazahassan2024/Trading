@@ -215,6 +215,125 @@ function positionPlan(ind, sr) {
   };
 }
 
+function directionalAgreement(sr, side) {
+  if (!sr?.list?.length) return 0;
+  const wanted = side === 'LONG' ? 'BUY' : 'SELL';
+  const against = side === 'LONG' ? 'SELL' : 'BUY';
+  const aligned = sr.list.filter(item => item.signal === wanted).reduce((sum,item)=>sum+item.weight,0);
+  const opposed = sr.list.filter(item => item.signal === against || (against === 'SELL' && item.signal === 'SHORT')).reduce((sum,item)=>sum+item.weight,0);
+  return sr.totalScore ? parseFloat(((aligned-opposed)/sr.totalScore*100).toFixed(1)) : 0;
+}
+
+function expectedValueR(winProbability, rewardRisk) {
+  const p = clamp(winProbability, 0.05, 0.95);
+  return parseFloat((p * rewardRisk - (1 - p)).toFixed(2));
+}
+
+function tradeQuality(ind, sr, side) {
+  if (!ind || !sr || (side !== 'LONG' && side !== 'SHORT')) return null;
+  const long = side === 'LONG';
+  const agreement = directionalAgreement(sr, side);
+  const rr = ind.risk?.rr || 0;
+  const riskPct = ind.risk?.riskPct ?? Infinity;
+  const trendAligned = long
+    ? ind.ema50above && ind.ema200above && ind.ema50Slope > 0
+    : !ind.ema50above && !ind.ema200above && ind.ema50Slope < 0;
+  const momentumAligned = long
+    ? ind.macd?.bullish && ind.rsi >= 48 && ind.rsi <= 72
+    : ind.macd && !ind.macd.bullish && ind.rsi <= 52 && ind.rsi >= 28;
+  const locationOk = long
+    ? !ind.structure?.nearResistance
+    : !ind.structure?.nearSupport;
+  const volumeOk = ind.volRatio === null || ind.volRatio >= 0.9;
+  const volatilityOk = ind.atr !== null && ind.atr >= 0.05 && ind.atr <= 2.8;
+  const riskOk = riskPct <= 1.1 && rr >= 1.45;
+  const regimeOk = sr.trending ? ind.adx >= 22 : agreement >= 35;
+
+  let score = 0;
+  score += clamp((sr.conf - 50) * 1.4, 0, 35);
+  score += clamp(agreement * 0.35, 0, 20);
+  score += trendAligned ? 14 : 0;
+  score += momentumAligned ? 14 : 0;
+  score += volumeOk ? 7 : -8;
+  score += locationOk ? 7 : -10;
+  score += volatilityOk ? 5 : -7;
+  score += riskOk ? 8 : -12;
+  score += regimeOk ? 6 : -8;
+  score = Math.round(clamp(score, 0, 100));
+
+  const probability = clamp((0.38 + score / 250 + Math.max(0, agreement) / 500), 0.35, 0.78);
+  const evR = expectedValueR(probability, rr || 1);
+  const blockers = [];
+  if (!trendAligned) blockers.push('trend not aligned');
+  if (!momentumAligned) blockers.push('momentum not confirmed');
+  if (!locationOk) blockers.push(long ? 'too near resistance' : 'too near support');
+  if (!volumeOk) blockers.push('thin volume');
+  if (!volatilityOk) blockers.push('volatility outside band');
+  if (!riskOk) blockers.push('risk/reward not tight enough');
+  if (!regimeOk) blockers.push('weak regime');
+
+  return {
+    score,
+    agreement,
+    probability: parseFloat((probability * 100).toFixed(1)),
+    expectedValueR: evR,
+    rewardRisk: rr,
+    riskPct,
+    trendAligned,
+    momentumAligned,
+    volumeOk,
+    locationOk,
+    volatilityOk,
+    regimeOk,
+    riskOk,
+    autoPass: score >= 72 && evR >= 0.2 && blockers.length <= 1,
+    blockers,
+  };
+}
+
+function compactEntrySnapshot(ind, sr, plan, source = 'chart') {
+  const quality = plan ? tradeQuality(ind, sr, plan.side) : null;
+  return {
+    source,
+    timeframe: document.getElementById('timeframe')?.value || '5m',
+    capturedAt: new Date().toISOString(),
+    consensus: sr ? {
+      decision: sr.cons,
+      confidence: sr.conf,
+      edge: sr.edge,
+      buyScore: sr.buyScore,
+      sellScore: sr.sellScore,
+      trending: sr.trending,
+      riskOk: sr.riskOk,
+    } : null,
+    quality,
+    indicators: ind ? {
+      rsi: ind.rsi,
+      stochRsi: ind.stochRsi,
+      macdHist: ind.macd?.hist ?? null,
+      macdBullish: ind.macd?.bullish ?? null,
+      adx: ind.adx,
+      atrPct: ind.atr,
+      volumeRatio: ind.volRatio,
+      ema50above: ind.ema50above,
+      ema200above: ind.ema200above,
+      ema50Slope: ind.ema50Slope,
+      goldenCross: ind.goldenCross,
+      candleBias: ind.candle?.bias,
+      candlePattern: ind.candle?.pattern,
+      structureRangePct: ind.structure?.rangePct ?? null,
+      nearSupport: ind.structure?.nearSupport ?? null,
+      nearResistance: ind.structure?.nearResistance ?? null,
+      risk: ind.risk,
+    } : null,
+    strategyVotes: (sr?.list || []).map(item => ({
+      name: item.name,
+      signal: item.signal,
+      weight: item.weight,
+    })),
+  };
+}
+
 function computeSeries(o,h,l,c,v) {
   if (c.length < 30) return null;
   const r=rsi(c), m=macd(c), b=bb(c), sr=stochRsi(c), ob=obv(c,v), at=atr(h,l,c);

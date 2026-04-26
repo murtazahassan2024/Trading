@@ -80,6 +80,13 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
   const activate = options.activate !== false;
   const isLong = side === 'LONG';
   if (mode === 'auto' && paperTrades.some(trade => trade.symbol === symbol)) return false;
+  const sr = options.signalSnapshot || strategies(ind);
+  const entryPlan = { ...(plan || positionPlan(ind, sr)), side };
+  const entrySnapshot = compactEntrySnapshot(ind, sr, entryPlan, options.source || mode);
+  if (mode === 'auto' && !entrySnapshot.quality?.autoPass) {
+    pushAlert('!', '#f5c842', `Auto skipped ${side} ${symbol}: ${(entrySnapshot.quality?.blockers || ['quality gate failed']).slice(0, 2).join(', ')}`);
+    return false;
+  }
   const newTrade = {
     tradeId: crypto.randomUUID ? crypto.randomUUID() : `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     side,
@@ -88,7 +95,8 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
     stop: isLong ? ind.risk.longStop : ind.risk.shortStop,
     target: isLong ? ind.risk.longTarget : ind.risk.shortTarget,
     openedAt: new Date(),
-    entrySignal: plan?.side || 'NO TRADE',
+    entrySignal: entryPlan?.side || 'NO TRADE',
+    entrySnapshot,
     mode,
     lastExitStatus: null,
     lastPrice: current,
@@ -115,10 +123,10 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
   return true;
 }
 
-function closePaperTrade(reason='manual', tradeId = activeTradeId) {
+function closePaperTrade(reason='manual', tradeId = activeTradeId, exitPrice = null) {
   const trade = paperTrades.find(item => item.tradeId === tradeId) || null;
   if (!trade) return;
-  const current = tradeClosePrice(trade);
+  const current = Number.isFinite(exitPrice) ? exitPrice : tradeClosePrice(trade);
   const pnl = computeTradePnl(trade, current);
   const rMultiple = tradeRiskMultiple(trade, current);
   paperLedger.unshift({
@@ -177,14 +185,14 @@ function toggleAutoPaper() {
 function exitSignalForTrade(trade, price, sr) {
   if (!trade) return {status:'Waiting', rule:'No open paper position'};
   if (trade.side === 'LONG') {
-    if (price <= trade.stop) return {status:'SELL / STOP', rule:'Price hit long stop'};
-    if (price >= trade.target) return {status:'SELL / TARGET', rule:'Price hit long target'};
-    if (sr && sr.cons === 'SELL' && sr.conf >= 58) return {status:'SELL / FLIP', rule:'Signal flipped against long'};
+    if (price <= trade.stop) return {status:'SELL / STOP', rule:'Price hit long stop', exitPrice: trade.stop};
+    if (price >= trade.target) return {status:'SELL / TARGET', rule:'Price hit long target', exitPrice: trade.target};
+    if (sr && sr.cons === 'SELL' && sr.conf >= 58) return {status:'SELL / FLIP', rule:'Signal flipped against long', exitPrice: price};
   }
   if (trade.side === 'SHORT') {
-    if (price >= trade.stop) return {status:'COVER / STOP', rule:'Price hit short stop'};
-    if (price <= trade.target) return {status:'COVER / TARGET', rule:'Price hit short target'};
-    if (sr && sr.cons === 'BUY' && sr.conf >= 58) return {status:'COVER / FLIP', rule:'Signal flipped against short'};
+    if (price >= trade.stop) return {status:'COVER / STOP', rule:'Price hit short stop', exitPrice: trade.stop};
+    if (price <= trade.target) return {status:'COVER / TARGET', rule:'Price hit short target', exitPrice: trade.target};
+    if (sr && sr.cons === 'BUY' && sr.conf >= 58) return {status:'COVER / FLIP', rule:'Signal flipped against short', exitPrice: price};
   }
   return {status:'HOLD', rule:'No exit trigger yet'};
 }
@@ -207,7 +215,7 @@ function updatePaperTrades(price, sr=null) {
         emitPlatformAlert(exit.status, `${trade.side} ${trade.symbol}: ${exit.rule}`);
       }
       if (autoPaper && trade.mode === 'auto') {
-        toClose.push({ tradeId: trade.tradeId, reason: exit.status.toLowerCase() });
+        toClose.push({ tradeId: trade.tradeId, reason: exit.status.toLowerCase(), exitPrice: exit.exitPrice });
       }
     }
   });
@@ -216,7 +224,7 @@ function updatePaperTrades(price, sr=null) {
   }
   renderOpenTrades();
   toClose.forEach(item => {
-    closePaperTrade(item.reason, item.tradeId);
+    closePaperTrade(item.reason, item.tradeId, item.exitPrice);
     lastAutoActionAt = Date.now();
   });
   if (!toClose.length) {
@@ -254,6 +262,12 @@ function maybeAutoPaper() {
   const symbol = currentSymbol();
   if (paperTrades.some(trade => trade.symbol === symbol)) return;
   const current = parseFloat((document.getElementById('m-price').textContent||'').replace(/[$,]/g,'')) || ind.last;
+  const quality = tradeQuality(ind, sr, plan.side);
+  if (!quality?.autoPass) {
+    lastAutoActionAt = Date.now();
+    pushAlert('!', '#f5c842', `Auto skipped ${plan.side} ${symbol}: ${(quality?.blockers || ['quality gate failed']).slice(0, 2).join(', ')}`);
+    return;
+  }
   const opened = openPaperTradeFromPlan(plan.side, current, ind, plan, 'auto');
   if (opened) lastAutoActionAt = Date.now();
 }
@@ -396,13 +410,14 @@ function renderLedger() {
   el.innerHTML = paperLedger.map((t, index)=>{
     const c = t.rMultiple >= 0 ? 'var(--accent)' : 'var(--accent2)';
     const id = t.tradeId || `ledger-${index}`;
-    return `<div class="ledger-row">
+    return `<div class="ledger-row paper-ledger-row">
       <label class="ledger-check"><input type="checkbox" class="ledger-delete-check" value="${id}"/></label>
       <strong>${t.symbol}</strong>
       <span>${t.side}</span>
       <span>${fmtPrice(t.entry)}</span>
       <span>${fmtPrice(t.exit)}</span>
       <span style="color:${c}">${t.rMultiple.toFixed(2)}R</span>
+      <span class="ledger-note">Q ${t.entrySnapshot?.quality?.score ?? '—'} · EV ${t.entrySnapshot?.quality?.expectedValueR ?? '—'}R</span>
       <span class="ledger-note">${t.reason}</span>
     </div>`;
   }).join('');

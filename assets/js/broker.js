@@ -132,7 +132,11 @@ function renderAlpacaAccount(account, positions = [], orders = []) {
     acct.innerHTML = `
       <div><span>Equity</span><strong>$${Number(account.equity || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div>
       <div><span>Buying power</span><strong>$${Number(account.buying_power || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div>
+      <div><span>Cash</span><strong>$${Number(account.cash || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div>
+      <div><span>Portfolio</span><strong>$${Number(account.portfolio_value || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div>
       <div><span>Status</span><strong>${account.status || '—'}</strong></div>
+      <div><span>Currency</span><strong>${account.currency || '—'}</strong></div>
+      <div><span>Account</span><strong>${account.account_number || account.id || '—'}</strong></div>
       <div><span>Open orders</span><strong>${orders.length}</strong></div>`;
   }
   const pos = document.getElementById('alpaca-positions');
@@ -143,13 +147,14 @@ function renderAlpacaAccount(account, positions = [], orders = []) {
     return;
   }
   pos.innerHTML = positions.map(p => `
-    <div class="ledger-row">
+    <div class="ledger-row alpaca-position-row">
       <strong>${p.symbol}</strong>
       <span>${p.side || '—'}</span>
       <span>Qty ${p.qty}</span>
       <span>Avg $${Number(p.avg_entry_price || 0).toFixed(2)}</span>
       <span style="color:${Number(p.unrealized_pl || 0) >= 0 ? 'var(--accent)' : 'var(--accent2)'}">$${Number(p.unrealized_pl || 0).toFixed(2)}</span>
       <span class="ledger-note">${Number(p.unrealized_plpc || 0) >= 0 ? '+' : ''}${(Number(p.unrealized_plpc || 0)*100).toFixed(2)}%</span>
+      <button class="mini-close-btn" type="button" onclick="closeAlpacaPosition('${String(p.symbol || '').replace(/'/g, '\\\'')}')">Close</button>
     </div>`).join('');
 }
 
@@ -161,7 +166,7 @@ function renderAlpacaOrders(orders = []) {
     return;
   }
   el.innerHTML = orders.map(order => `
-    <div class="ledger-row">
+    <div class="ledger-row alpaca-order-row">
       <strong>${order.symbol}</strong>
       <span>${String(order.side || '—').toUpperCase()}</span>
       <span>${order.qty || order.notional || '—'}</span>
@@ -178,7 +183,8 @@ async function submitAlpacaPaperOrder() {
   if (!plan.side || !['LONG','SHORT'].includes(plan.side)) return;
   if (!Number.isFinite(plan.qty) || plan.qty <= 0) return;
   try {
-    await validateAlpacaSymbol();
+    const tradable = await validateAlpacaSymbol();
+    if (!tradable) throw new Error(`${plan.symbol} did not pass Alpaca tradability validation.`);
     const order = await alpacaFetch('/api/alpaca/orders', {
       method: 'POST',
       body: JSON.stringify({
@@ -209,6 +215,35 @@ async function cancelAllAlpacaOrders() {
   }
 }
 
+async function liquidateAlpacaPositions() {
+  try {
+    const result = await alpacaFetch('/api/alpaca/positions/close-all', { method: 'POST' });
+    const count = Array.isArray(result) ? result.length : 0;
+    pushAlert('■', '#ff4d6d', `Liquidate-all sent to Alpaca paper for ${count} position(s).`);
+    await syncAlpacaBroker();
+    return true;
+  } catch (error) {
+    pushAlert('!', '#ff4d6d', `Alpaca liquidate-all failed: ${error.message}`);
+    return false;
+  }
+}
+
+async function closeAlpacaPosition(symbol) {
+  if (!symbol) return false;
+  try {
+    const result = await alpacaFetch('/api/alpaca/positions/close', {
+      method: 'POST',
+      body: JSON.stringify({ symbol }),
+    });
+    pushAlert('■', '#ff4d6d', `Close sent to Alpaca paper for ${symbol}. Status: ${result.status || 'submitted'}.`);
+    await syncAlpacaBroker();
+    return true;
+  } catch (error) {
+    pushAlert('!', '#ff4d6d', `Alpaca close ${symbol} failed: ${error.message}`);
+    return false;
+  }
+}
+
 async function killSwitch() {
   autoPaper = false;
   autoScout = false;
@@ -219,10 +254,11 @@ async function killSwitch() {
     autoBtn.classList.remove('active');
   }
   closeAll();
-  await cancelAllAlpacaOrders();
+  const liquidated = await liquidateAlpacaPositions();
+  if (!liquidated) await cancelAllAlpacaOrders();
   persistAppStateSoon();
-  setAlpacaStatus('KILL SWITCH ACTIVE', 'Automation stopped, streams disconnected, open Alpaca paper orders canceled.', false);
-  pushAlert('!', '#ff4d6d', 'Kill switch activated: automation stopped and paper orders canceled.');
+  setAlpacaStatus('KILL SWITCH ACTIVE', 'Automation stopped, streams disconnected, Alpaca paper positions liquidated and orders canceled.', false);
+  pushAlert('!', '#ff4d6d', 'Kill switch activated: automation stopped, positions liquidated, and orders canceled.');
 }
 
 window.addEventListener('load', () => {

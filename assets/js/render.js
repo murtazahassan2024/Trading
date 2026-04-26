@@ -107,17 +107,17 @@ function renderScanner(rows) {
   renderPick('best-sell', bestSell, 'SHORT');
 
   table.innerHTML = valid
-    .sort((a,b)=>Math.max(b.longScore,b.shortScore)-Math.max(a.longScore,a.shortScore))
+    .sort((a,b)=>(b.quality?.score || Math.max(b.longScore,b.shortScore))-(a.quality?.score || Math.max(a.longScore,a.shortScore)))
     .map(r=>{
       const color=r.side==='LONG'?'var(--accent)':r.side==='SHORT'?'var(--accent2)':'var(--gold)';
-      const bar=clamp(Math.max(r.longScore,r.shortScore)*12,5,100);
+      const bar=clamp(r.quality?.score || Math.max(r.longScore,r.shortScore)*12,5,100);
       return `<div class="scan-row" onclick="selectSymbol('${r.symbol}')">
         <div class="scan-symbol">${r.symbol}</div>
         <div class="scan-signal ${r.side==='LONG'?'buy':r.side==='SHORT'?'sell':'hold'}">${r.side}</div>
         <div class="scan-bars scan-hide"><div class="scan-fill" style="width:${bar}%;background:${color}"></div></div>
-        <div>${r.conf}%</div>
+        <div>${r.conf}% · Q${r.quality?.score ?? '—'}</div>
         <div class="scan-hide">ADX ${r.adx}</div>
-        <div class="scan-hide">${r.risk}</div>
+        <div class="scan-hide">EV ${r.quality?.expectedValueR ?? '—'}R · ${r.risk}</div>
       </div>`;
     }).join('');
 }
@@ -131,7 +131,7 @@ function renderPick(id, row, side) {
   el.innerHTML = `
     <span class="pick-label">${side === 'LONG' ? 'Best long watch' : 'Best short watch'}</span>
     <strong>${actionable ? row.symbol : 'No clean setup'}</strong>
-    <small>${side} · ${row.signal} · confidence ${row.conf}% · ${row.regime} · ${row.risk}</small>
+    <small>${side} · ${row.signal} · confidence ${row.conf}% · Q${row.quality?.score ?? '—'} · EV ${row.quality?.expectedValueR ?? '—'}R</small>
   `;
 }
 
