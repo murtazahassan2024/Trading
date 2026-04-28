@@ -62,7 +62,7 @@ async function fetchMTFKlines(sym) {
 
 async function fetchMeta(sym) {
   try {
-    const {funding:fr, openInterest:oi}=await Exchange.meta(sym);
+    const {funding:fr, openInterest:oi, longShort}=await Exchange.meta(sym);
     if (fr.unavailable || oi.unavailable) {
       currentFundingRate = null;
       document.getElementById('m-fund').textContent='N/A';
@@ -77,8 +77,37 @@ async function fetchMeta(sym) {
     if (typeof renderFundingAdjustment === 'function') renderFundingAdjustment();
     if (K.c.length) runAnalysis();
     const oiVal=parseFloat(oi.openInterest);
+    if (Number.isFinite(oiVal)) {
+      previousOpenInterest = Number.isFinite(currentOpenInterest) ? currentOpenInterest : oiVal;
+      currentOpenInterest = oiVal;
+    }
+    const ratioRow = Array.isArray(longShort) ? longShort[0] : null;
+    const ratio = parseFloat(ratioRow?.longShortRatio);
+    currentLongShortRatio = Number.isFinite(ratio) ? ratio : null;
     document.getElementById('m-oi').textContent=oiVal>=1000?(oiVal/1000).toFixed(2)+'K':oiVal.toFixed(2);
   } catch(e){}
+}
+
+async function handleTimeframeChange() {
+  persistAppStateSoon();
+  const sym=document.getElementById('ticker').value.toUpperCase().trim()||'BTCUSDT';
+  const tf=document.getElementById('timeframe').value;
+  if (!connected) return;
+  showOverlay(`Rebuilding ${sym} ${tf} candles...`);
+  const ok = await fetchKlines(sym, tf);
+  try { await fetchMTFKlines(sym); } catch(e) { console.warn('MTF kline REST fail', e); }
+  if (ok) {
+    renderChart();
+    runAnalysis();
+  }
+  closeAll();
+  openWS(sym, tf);
+  fetchMeta(sym);
+  scanMarkets();
+  if(fundingTimer)clearInterval(fundingTimer);
+  fundingTimer=setInterval(()=>fetchMeta(sym),30000);
+  if(scanTimer)clearInterval(scanTimer);
+  scanTimer=setInterval(scanMarkets,60000);
 }
 
 async function toggleConnect(){
@@ -114,7 +143,7 @@ window.addEventListener('load',()=>{
       persistAppStateSoon();
     });
   });
-  document.getElementById('timeframe')?.addEventListener('change',persistAppStateSoon);
+  document.getElementById('timeframe')?.addEventListener('change',handleTimeframeChange);
   (async()=>{
     try {
       const state = window.Persistence ? await Persistence.load() : null;

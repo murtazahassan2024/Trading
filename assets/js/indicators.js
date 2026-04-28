@@ -1,9 +1,19 @@
 const ATR_STOP_MULTIPLIER = 2.0;
 const CHANDELIER_PERIOD = 22;
 const CHANDELIER_MULTIPLIER = 3.0;
+const TARGET_R_MULTIPLE = 2.0;
+const PARTIAL_EXIT_R = 1.0;
+const PARTIAL_EXIT_FRACTION = 0.5;
 const FUNDING_EXTREME_THRESHOLD = 0.001;
 const FUNDING_HIGH_THRESHOLD = 0.0005;
 const MIN_CONFIDENCE_THRESHOLD = 60;
+const EXECUTION_CONFIDENCE_THRESHOLD = 60;
+const MIN_ADX_TREND_THRESHOLD = 20;
+const MIN_VOLUME_RATIO = 1.0;
+const CANDLE_PATTERN_WEIGHT = 7;
+const OI_WEIGHT = 8;
+const ORDER_BOOK_WEIGHT = 7;
+const LONG_SHORT_WEIGHT = 5;
 const FUNDING_MODIFIERS = {
   EXTREME_POSITIVE: { longMod: 0.60, shortMod: 1.20 },
   HIGH_POSITIVE:    { longMod: 0.80, shortMod: 1.10 },
@@ -22,6 +32,11 @@ const NEWS_MIN_CONFIDENCE = 60;
 
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
+}
+
+function safeNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function fmtPrice(n) {
@@ -168,6 +183,56 @@ function calcChandelierExit(candles, atr, direction, period = CHANDELIER_PERIOD,
   return direction === 'LONG'
     ? Math.max(previousStop, rawStop)
     : Math.min(previousStop, rawStop);
+}
+
+function validateCandles(o, h, l, c, v) {
+  if (![o, h, l, c, v].every(Array.isArray) || !c.length) {
+    return { ok: false, reason: 'No candle data available' };
+  }
+  const len = c.length;
+  for (let i = 0; i < len; i++) {
+    const values = [o[i], h[i], l[i], c[i], v[i]].map(safeNumber);
+    if (values.some(value => value === null)) return { ok: false, reason: `Invalid candle value at index ${i}` };
+    if (h[i] < l[i]) return { ok: false, reason: `High below low at index ${i}` };
+    if (o[i] <= 0 || h[i] <= 0 || l[i] <= 0 || c[i] <= 0) return { ok: false, reason: `Non-positive price at index ${i}` };
+    if (v[i] < 0) return { ok: false, reason: `Negative volume at index ${i}` };
+    if (i > 0) {
+      const gapPct = Math.abs(c[i] - c[i - 1]) / c[i - 1] * 100;
+      const wickPct = (h[i] - l[i]) / c[i] * 100;
+      if (gapPct > 25) return { ok: false, reason: `Extreme close gap ${gapPct.toFixed(1)}% at index ${i}` };
+      if (wickPct > 35) return { ok: false, reason: `Extreme candle range ${wickPct.toFixed(1)}% at index ${i}` };
+    }
+  }
+  const lastVolAvg = sma(v, Math.min(20, v.length));
+  if (lastVolAvg && v[v.length - 1] === 0) return { ok: false, reason: 'Latest candle has zero volume' };
+  return { ok: true, reason: 'Candles validated' };
+}
+
+function candleProbability(candle) {
+  if (!candle || candle.bias === 'NEUTRAL') return 0.5;
+  return candle.bias === 'BUY' ? 0.62 : 0.38;
+}
+
+function oiProbability(directionHint = 0.5) {
+  if (!Number.isFinite(currentOpenInterest) || !Number.isFinite(previousOpenInterest) || previousOpenInterest <= 0) return 0.5;
+  const change = (currentOpenInterest - previousOpenInterest) / previousOpenInterest;
+  if (Math.abs(change) < 0.001) return 0.5;
+  const trendLong = directionHint >= 0.5;
+  if (change > 0) return trendLong ? 0.58 : 0.42;
+  return trendLong ? 0.45 : 0.55;
+}
+
+function orderBookProbability() {
+  if (!Number.isFinite(orderBookImbalance) || orderBookImbalance <= 0) return 0.5;
+  return clamp(0.5 + Math.log(orderBookImbalance) * 0.18, 0.25, 0.75);
+}
+
+function longShortContrarianProbability() {
+  if (!Number.isFinite(currentLongShortRatio) || currentLongShortRatio <= 0) return 0.5;
+  const longShare = currentLongShortRatio / (1 + currentLongShortRatio);
+  if (longShare >= 0.80) return 0.35;
+  if (longShare <= 0.20) return 0.65;
+  return clamp(0.5 - (longShare - 0.5) * 0.35, 0.38, 0.62);
 }
 
 function emaValue(values, period) {
@@ -317,13 +382,15 @@ function riskPlan(ind) {
   const shortStop = calcDynamicStop(ind.last, ind.atrValue, 'SHORT');
   if (!Number.isFinite(longStop) || !Number.isFinite(shortStop)) return null;
   const stopDist=ind.atrValue*ATR_STOP_MULTIPLIER;
-  const targetDist=stopDist*1.6;
+  const targetDist=stopDist*TARGET_R_MULTIPLE;
   return {
     atr14: ind.atrValue,
     longStop,
     longTarget: ind.last+targetDist,
+    longPartialTarget: ind.last + stopDist * PARTIAL_EXIT_R,
     shortStop,
     shortTarget: ind.last-targetDist,
+    shortPartialTarget: ind.last - stopDist * PARTIAL_EXIT_R,
     stopType: 'INITIAL',
     longStopInfo: {
       atr14: ind.atrValue,
@@ -347,8 +414,15 @@ function riskPlan(ind) {
 function positionPlan(ind, sr) {
   const probability = sr?.probability || null;
   const mtf = sr?.mtf || null;
+  const riskGate = mtf !== null && typeof hardRiskGate === 'function' ? hardRiskGate(currentSymbol?.()) : { ok: true };
   if (!ind || !sr || !ind.risk) {
     return { side:'NO TRADE', cls:'none', entry:null, stop:null, target:null, reason:'Waiting for full signal stack', probability, mtf };
+  }
+  if (!ind.dataHealth?.ok) {
+    return { side:'NO TRADE', cls:'none', entry:ind.last, stop:null, target:null, reason:ind.dataHealth?.reason || 'Candle data failed validation', probability, mtf };
+  }
+  if (!riskGate.ok) {
+    return { side:'NO TRADE', cls:'none', entry:ind.last, stop:null, target:null, reason:riskGate.reason, probability, mtf };
   }
   if (probability?.adjustedConfidence >= NEWS_MIN_CONFIDENCE && probability?.confidenceAfterNews < NEWS_MIN_CONFIDENCE) {
     return { side:'NO TRADE', cls:'none', entry:ind.last, stop:null, target:null, reason:'Confidence suppressed by news sentiment', probability, mtf };
@@ -362,7 +436,7 @@ function positionPlan(ind, sr) {
   if (mtf && mtf.confluenceScore === 3 && mtf.confluenceDirection !== probability?.direction) {
     return { side:'NO TRADE', cls:'none', entry:ind.last, stop:null, target:null, reason:mtf.confluenceReason, probability, mtf };
   }
-  if (probability?.direction === 'LONG' && probability.confidence >= 58 && sr.riskOk) {
+  if (probability?.direction === 'LONG' && probability.confidence >= EXECUTION_CONFIDENCE_THRESHOLD && sr.riskOk) {
     return {
       side:'LONG',
       cls:'long',
@@ -375,12 +449,13 @@ function positionPlan(ind, sr) {
       stopType: ind.risk.longStopInfo.stopType,
       stopPrice: ind.risk.longStopInfo.stopPrice,
       target:ind.risk.longTarget,
+      partialTarget: ind.risk.longPartialTarget,
       reason:`${probability.label}; ${sr.trending?'trend':'range'} regime`,
       probability,
       mtf
     };
   }
-  if (probability?.direction === 'SHORT' && probability.confidence >= 58 && sr.riskOk) {
+  if (probability?.direction === 'SHORT' && probability.confidence >= EXECUTION_CONFIDENCE_THRESHOLD && sr.riskOk) {
     return {
       side:'SHORT',
       cls:'short',
@@ -393,6 +468,7 @@ function positionPlan(ind, sr) {
       stopType: ind.risk.shortStopInfo.stopType,
       stopPrice: ind.risk.shortStopInfo.stopPrice,
       target:ind.risk.shortTarget,
+      partialTarget: ind.risk.shortPartialTarget,
       reason:`${probability.label}; ${sr.trending?'trend':'range'} regime`,
       probability,
       mtf
@@ -467,6 +543,11 @@ function probabilityClass(probability) {
   return probability.long >= probability.short ? 'buy' : 'sell';
 }
 
+function longRawCandidate(...values) {
+  const valid = values.filter(Number.isFinite);
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : 0.5;
+}
+
 function weightedProbability(ind, srContext = {}) {
   if (!ind) return null;
   const clampProb = value => clamp(value, 0, 1);
@@ -485,6 +566,10 @@ function weightedProbability(ind, srContext = {}) {
     ? sigmoid((srContext.buys - srContext.sells) * 0.8)
     : macdProb;
   const volumeProb = clampProb(0.5 + (directionBias - 0.5) * (0.5 + volumeStrength));
+  const candleProb = candleProbability(ind.candle);
+  const oiProb = oiProbability(longRawCandidate(rsiProb, macdProb, adxProb, volumeProb));
+  const bookProb = orderBookProbability();
+  const longShortProb = longShortContrarianProbability();
   const funding = Object.prototype.hasOwnProperty.call(srContext, 'fundingRatePct')
     ? srContext.fundingRatePct
     : currentFundingRatePct();
@@ -497,13 +582,19 @@ function weightedProbability(ind, srContext = {}) {
     { name:'ADX regime', weight:20, long:adxProb },
     { name:'Volume confirmation', weight:15, long:volumeProb },
     { name:'Funding rate', weight:10, long:fundingProb },
+    { name:'Nison candles', weight:CANDLE_PATTERN_WEIGHT, long:candleProb },
+    { name:'Open interest', weight:OI_WEIGHT, long:oiProb },
+    { name:'Order book', weight:ORDER_BOOK_WEIGHT, long:bookProb },
+    { name:'Long/short ratio', weight:LONG_SHORT_WEIGHT, long:longShortProb },
   ];
   const totalWeight = components.reduce((sum, item) => sum + item.weight, 0);
   const longRaw = components.reduce((sum, item) => sum + item.long * item.weight, 0) / totalWeight;
   const longPct = Math.round(clamp(longRaw * 100, 1, 99));
   const shortPct = 100 - longPct;
   const baseConfidence = Math.max(longPct, shortPct);
-  const baseDirection = baseConfidence < 55 ? 'NO TRADE' : longPct > shortPct ? 'LONG' : 'SHORT';
+  const lowTrend = ind.adx !== null && ind.adx < MIN_ADX_TREND_THRESHOLD;
+  const lowVolume = ind.volRatio !== null && ind.volRatio < MIN_VOLUME_RATIO;
+  const baseDirection = baseConfidence < 55 || lowTrend || lowVolume ? 'NO TRADE' : longPct > shortPct ? 'LONG' : 'SHORT';
   const fundingRate = Object.prototype.hasOwnProperty.call(srContext, 'fundingRatePct')
     ? srContext.fundingRatePct
     : currentFundingRatePct();
@@ -516,7 +607,8 @@ function weightedProbability(ind, srContext = {}) {
   const newsMod = NEWS_MODIFIERS[news.zone] || NEWS_MODIFIERS.NEUTRAL;
   const newsModifier = directionAfterFunding === 'LONG' ? newsMod.longMod : directionAfterFunding === 'SHORT' ? newsMod.shortMod : 1;
   const confidenceAfterNews = Math.min(Math.round(adjustedConfidence * newsModifier), 100);
-  const direction = confidenceAfterNews < NEWS_MIN_CONFIDENCE ? 'NO TRADE' : directionAfterFunding;
+  const macroBlocked = typeof isMacroBlackoutActive === 'function' && isMacroBlackoutActive(news);
+  const direction = confidenceAfterNews < NEWS_MIN_CONFIDENCE || macroBlocked ? 'NO TRADE' : directionAfterFunding;
   const adjustedLong = direction === 'LONG' ? confidenceAfterNews : direction === 'SHORT' ? 100 - confidenceAfterNews : longPct;
   const adjustedShort = direction === 'SHORT' ? confidenceAfterNews : direction === 'LONG' ? 100 - confidenceAfterNews : shortPct;
   return {
@@ -537,6 +629,11 @@ function weightedProbability(ind, srContext = {}) {
     topBullishHeadline: news.topBullish,
     topBearishHeadline: news.topBearish,
     macroAlert: news.macroAlert,
+    blockedBy: [
+      lowTrend ? `ADX below ${MIN_ADX_TREND_THRESHOLD}` : null,
+      lowVolume ? 'Volume below 20-period average' : null,
+      macroBlocked ? 'Macro/news blackout active' : null,
+    ].filter(Boolean),
     label: direction === 'NO TRADE' ? `No trade: ${confidenceAfterNews}% confidence` : probabilityLabel({ long: adjustedLong, short: adjustedShort }),
     components: components.map(item => ({
       name: item.name,
@@ -562,10 +659,10 @@ function tradeQuality(ind, sr, side) {
   const locationOk = long
     ? !ind.structure?.nearResistance
     : !ind.structure?.nearSupport;
-  const volumeOk = ind.volRatio === null || ind.volRatio >= 0.9;
+  const volumeOk = ind.volRatio === null || ind.volRatio >= MIN_VOLUME_RATIO;
   const volatilityOk = ind.atr !== null && ind.atr >= 0.05 && ind.atr <= 2.8;
   const riskOk = riskPct <= 1.1 && rr >= 1.45;
-  const regimeOk = sr.trending ? ind.adx >= 22 : agreement >= 35;
+  const regimeOk = ind.adx === null ? false : ind.adx >= MIN_ADX_TREND_THRESHOLD;
 
   let score = 0;
   score += clamp((sr.conf - 50) * 1.4, 0, 35);
@@ -656,6 +753,14 @@ function compactEntrySnapshot(ind, sr, plan, source = 'chart') {
 
 function computeSeries(o,h,l,c,v) {
   if (c.length < 30) return null;
+  const dataHealth = validateCandles(o, h, l, c, v);
+  lastDataHealth = dataHealth;
+  if (!dataHealth.ok) return {
+    rsi:null, macd:null, bb:null, stochRsi:null, obv:{rising:false}, atr:null,
+    atrValue:null, adx:null, candle:{bias:'NEUTRAL', pattern:'Invalid data'}, structure:null,
+    volRatio:null, ema50above:null, ema200above:null, ema50Slope:0, goldenCross:null,
+    candles:[], last:c[c.length - 1] || null, risk:null, dataHealth
+  };
   const candles = c.map((close, index) => ({
     open: o[index],
     high: h[index],
@@ -677,7 +782,8 @@ function computeSeries(o,h,l,c,v) {
     ema50Slope: le50&&prev50?parseFloat(((le50-prev50)/prev50*100).toFixed(3)):0,
     goldenCross: le50!==null&&le200!==null?le50>le200:null,
     candles,
-    last
+    last,
+    dataHealth
   };
   ind.risk = riskPlan(ind);
   return ind;
@@ -701,9 +807,9 @@ function compute() {
 function strategies(ind, options = {}) {
   if (!ind) return null;
   const {rsi:r,macd:m,bb:b,stochRsi:sr,obv:ob,ema50above:e50,ema200above:e200,goldenCross:gc,adx:ax,candle,structure,volRatio,ema50Slope,risk} = ind;
-  const trending=ax!==null&&ax>=22;
+  const trending=ax!==null&&ax>=MIN_ADX_TREND_THRESHOLD;
   const strongTrend=ax!==null&&ax>=28;
-  const volumeOk=volRatio===null||volRatio>=.85;
+  const volumeOk=volRatio===null||volRatio>=MIN_VOLUME_RATIO;
   const riskOk=risk&&risk.riskPct<=2.2;
   const nearSupport=structure&&structure.nearSupport;
   const nearResistance=structure&&structure.nearResistance;

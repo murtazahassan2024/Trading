@@ -12,15 +12,25 @@ function summarizeBacktest(trades) {
   const avgWin = wins.length ? grossWin / wins.length : 0;
   const avgLoss = losses.length ? grossLoss / losses.length : 0;
   const expectancy = trades.length ? trades.reduce((a,t)=>a+t.r,0) / trades.length : 0;
+  const returns = trades.map(t => t.r);
+  const mean = expectancy;
+  const variance = returns.length > 1 ? returns.reduce((sum,r)=>sum + Math.pow(r - mean, 2), 0) / (returns.length - 1) : 0;
+  const downside = losses.length ? losses.reduce((sum,t)=>sum + Math.pow(t.r, 2), 0) / losses.length : 0;
+  const sharpe = variance ? mean / Math.sqrt(variance) * Math.sqrt(Math.min(252, trades.length || 1)) : 0;
+  const sortino = downside ? mean / Math.sqrt(downside) * Math.sqrt(Math.min(252, trades.length || 1)) : 0;
+  const riskPct = Math.max(0, Number(document.getElementById('risk-pct')?.value || 1));
   return {
     trades: trades.length,
     winRate: trades.length ? wins.length/trades.length*100 : 0,
     profitFactor: grossLoss ? grossWin/grossLoss : grossWin ? Infinity : 0,
     maxDd,
+    maxDdPct: maxDd * riskPct,
     totalR: trades.reduce((a,t)=>a+t.r,0),
     expectancy,
     avgWin,
     avgLoss,
+    sharpe,
+    sortino,
   };
 }
 
@@ -29,7 +39,20 @@ function backtestSettings() {
     slippagePct: Math.max(0, Number(document.getElementById('bt-slip')?.value || 0)),
     feePct: Math.max(0, Number(document.getElementById('fee-pct')?.value || 0)),
     maxBars: Math.max(3, Number(document.getElementById('bt-bars')?.value || 24)),
+    fundingRate: Number.isFinite(currentFundingRate) ? currentFundingRate : 0,
+    intervalMinutes: intervalMinutes(document.getElementById('timeframe')?.value || '5m'),
+    minConfidence: 60,
   };
+}
+
+function intervalMinutes(tf) {
+  const value = Number(String(tf).slice(0, -1));
+  const unit = String(tf).slice(-1);
+  if (!Number.isFinite(value)) return 5;
+  if (unit === 'm') return value;
+  if (unit === 'h') return value * 60;
+  if (unit === 'd') return value * 1440;
+  return 5;
 }
 
 function applyEntrySlip(price, side, slipPct) {
@@ -48,66 +71,115 @@ function simulateTrade(series, side, entryIndex, plan, settings=backtestSettings
   const target = plan.target;
   const risk = Math.abs(entry-stop);
   const feeR = risk ? ((entry + target) * settings.feePct / 100) / risk : 0;
+  const fundingCostR = bars => {
+    if (!risk || !settings.fundingRate) return 0;
+    const periods = Math.floor((bars * settings.intervalMinutes) / 480);
+    return Math.abs(entry * settings.fundingRate * periods) / risk;
+  };
   for (let i=entryIndex+1;i<Math.min(series.c.length, entryIndex+settings.maxBars+1);i++) {
     if (side === 'LONG') {
       if (series.l[i] <= stop) {
         const exit = applyExitSlip(stop, side, settings.slippagePct);
-        return {r: risk ? (exit-entry)/risk-feeR : 0, bars:i-entryIndex, exit, reason:'stop'};
+        const bars = i-entryIndex;
+        return {r: risk ? (exit-entry)/risk-feeR-fundingCostR(bars) : 0, bars, exit, reason:'stop'};
       }
       if (series.h[i] >= target) {
         const exit = applyExitSlip(target, side, settings.slippagePct);
-        return {r: risk ? (exit-entry)/risk-feeR : 0, bars:i-entryIndex, exit, reason:'target'};
+        const bars = i-entryIndex;
+        return {r: risk ? (exit-entry)/risk-feeR-fundingCostR(bars) : 0, bars, exit, reason:'target'};
       }
     } else {
       if (series.h[i] >= stop) {
         const exit = applyExitSlip(stop, side, settings.slippagePct);
-        return {r: risk ? (entry-exit)/risk-feeR : 0, bars:i-entryIndex, exit, reason:'stop'};
+        const bars = i-entryIndex;
+        return {r: risk ? (entry-exit)/risk-feeR-fundingCostR(bars) : 0, bars, exit, reason:'stop'};
       }
       if (series.l[i] <= target) {
         const exit = applyExitSlip(target, side, settings.slippagePct);
-        return {r: risk ? (entry-exit)/risk-feeR : 0, bars:i-entryIndex, exit, reason:'target'};
+        const bars = i-entryIndex;
+        return {r: risk ? (entry-exit)/risk-feeR-fundingCostR(bars) : 0, bars, exit, reason:'target'};
       }
     }
   }
   const exit = applyExitSlip(series.c[Math.min(series.c.length-1, entryIndex+settings.maxBars)], side, settings.slippagePct);
   return {
-    r: risk ? (side === 'LONG' ? exit-entry : entry-exit)/risk-feeR : 0,
+    r: risk ? (side === 'LONG' ? exit-entry : entry-exit)/risk-feeR-fundingCostR(settings.maxBars) : 0,
     bars: settings.maxBars,
     exit,
     reason:'time',
   };
 }
 
-async function runBacktest(symbol=document.getElementById('ticker').value.toUpperCase().trim()||'BTCUSDT') {
+function backtestEntryPlan(ind, sr, settings = backtestSettings()) {
+  if (!ind?.risk || !ind.dataHealth?.ok || !sr?.probability) {
+    return { side:'NO TRADE', reason: ind?.dataHealth?.reason || 'Missing indicator stack' };
+  }
+  const side = sr.probability.direction;
+  if (side !== 'LONG' && side !== 'SHORT') {
+    return { side:'NO TRADE', reason: sr.probability.blockedBy?.join(', ') || sr.probability.label || 'Probability below threshold' };
+  }
+  if (sr.probability.confidence < settings.minConfidence) {
+    return { side:'NO TRADE', reason:`Confidence ${sr.probability.confidence}% below ${settings.minConfidence}%` };
+  }
+  if (!sr.riskOk) return { side:'NO TRADE', reason:'Risk plan outside limits' };
+  const isLong = side === 'LONG';
+  return {
+    side,
+    entry: ind.last,
+    stop: isLong ? ind.risk.longStop : ind.risk.shortStop,
+    stopPrice: isLong ? ind.risk.longStop : ind.risk.shortStop,
+    target: isLong ? ind.risk.longTarget : ind.risk.shortTarget,
+    partialTarget: isLong ? ind.risk.longPartialTarget : ind.risk.shortPartialTarget,
+    probability: sr.probability,
+    reason: sr.probability.label,
+  };
+}
+
+async function runBacktest(symbol=document.getElementById('ticker').value.toUpperCase().trim()||'BTCUSDT', options = {}) {
   const tf = document.getElementById('timeframe').value;
-  const data = await fetchKlineData(symbol, tf, 300);
+  const data = await fetchKlineData(symbol, tf, options.limit || 1000);
   const raw = seriesFromKlines(data);
   const trades = [];
   const settings = backtestSettings();
-  for (let i=60;i<raw.c.length-25;i++) {
+  const reasons = {};
+  const outOfSampleStart = Math.floor(raw.c.length * 0.65);
+  for (let i=Math.max(60, outOfSampleStart);i<raw.c.length-25;i++) {
     const slice = {
       o: raw.o.slice(0,i+1), h: raw.h.slice(0,i+1), l: raw.l.slice(0,i+1), c: raw.c.slice(0,i+1), v: raw.v.slice(0,i+1)
     };
     const ind = computeSeries(slice.o,slice.h,slice.l,slice.c,slice.v);
-    const sr = strategies(ind);
-    const plan = positionPlan(ind, sr);
-    if (plan.side !== 'LONG' && plan.side !== 'SHORT') continue;
+    const sr = strategies(ind, { fundingRatePct: currentFundingRate, skipMtf: true });
+    const plan = backtestEntryPlan(ind, sr, settings);
+    if (plan.side !== 'LONG' && plan.side !== 'SHORT') {
+      reasons[plan.reason] = (reasons[plan.reason] || 0) + 1;
+      continue;
+    }
     const result = simulateTrade(raw, plan.side, i, plan, settings);
-    trades.push({symbol, side:plan.side, ...result});
+    trades.push({symbol, side:plan.side, confidence:plan.probability?.confidence, ...result});
     i += Math.max(1, result.bars);
   }
-  renderBacktestResults(symbol, summarizeBacktest(trades));
-  runLiveReadiness();
+  const summary = summarizeBacktest(trades);
+  summary.outOfSample = true;
+  summary.reasons = reasons;
+  if (options.render !== false) {
+    renderBacktestResults(symbol, summary);
+    runLiveReadiness();
+  }
   return trades;
 }
 
 async function runScannerBacktests() {
   const results = await Promise.all(SCAN_SYMBOLS.map(async s=>{
-    const trades = await runBacktest(s);
-    return {symbol:s, summary:summarizeBacktest(trades)};
+    const trades = await runBacktest(s, { render:false, limit:1000 });
+    return {symbol:s, trades, summary:summarizeBacktest(trades)};
   }));
-  const best = results.sort((a,b)=>b.summary.totalR-a.summary.totalR)[0];
-  renderBacktestResults(`Best: ${best.symbol}`, best.summary);
+  const allTrades = results.flatMap(result => result.trades);
+  const summary = summarizeBacktest(allTrades);
+  summary.outOfSample = true;
+  summary.symbolCount = results.length;
+  const best = [...results].sort((a,b)=>b.summary.totalR-a.summary.totalR)[0];
+  summary.bestSymbol = best?.symbol || '—';
+  renderBacktestResults(`Scanner set · best ${summary.bestSymbol}`, summary);
   runLiveReadiness();
 }
 
@@ -121,9 +193,17 @@ function renderBacktestResults(label, summary) {
     <div><span>Profit factor</span><strong>${summary.profitFactor===Infinity?'∞':summary.profitFactor.toFixed(2)}</strong></div>
     <div><span>Expectancy</span><strong style="color:${summary.expectancy>=0?'var(--accent)':'var(--accent2)'}">${summary.expectancy.toFixed(2)}R</strong></div>
     <div><span>Avg win/loss</span><strong>${summary.avgWin.toFixed(2)}R / ${summary.avgLoss.toFixed(2)}R</strong></div>
-    <div><span>Max drawdown</span><strong>${summary.maxDd.toFixed(2)}R</strong></div>
-    <div><span>Total R</span><strong style="color:${summary.totalR>=0?'var(--accent)':'var(--accent2)'}">${summary.totalR.toFixed(2)}R</strong></div>`;
+    <div><span>Max drawdown</span><strong>${summary.maxDd.toFixed(2)}R / ${summary.maxDdPct.toFixed(2)}%</strong></div>
+    <div><span>Sharpe / Sortino</span><strong>${summary.sharpe.toFixed(2)} / ${summary.sortino.toFixed(2)}</strong></div>
+    <div><span>Sample type</span><strong>${summary.outOfSample ? 'Out-of-sample' : 'Forward'}</strong></div>
+    <div><span>Total R</span><strong style="color:${summary.totalR>=0?'var(--accent)':'var(--accent2)'}">${summary.totalR.toFixed(2)}R</strong></div>
+    ${summary.trades === 0 && summary.reasons ? `<div><span>No-trade reason</span><strong>${topBacktestReason(summary.reasons)}</strong></div>` : ''}`;
   window.lastBacktestSummary = summary;
+}
+
+function topBacktestReason(reasons = {}) {
+  const [reason, count] = Object.entries(reasons).sort((a,b)=>b[1]-a[1])[0] || ['No qualifying probability setup', 0];
+  return `${reason} (${count})`;
 }
 
 function summarizeForwardTest() {
@@ -134,7 +214,7 @@ function summarizeForwardTest() {
 function renderForwardTest(summary = summarizeForwardTest()) {
   const el = document.getElementById('forward-test-results');
   if (!el) return;
-  const status = summary.trades < 30 ? 'Need 30+ trades' : summary.profitFactor >= 1.1 && summary.expectancy > 0 ? 'Promising' : 'Weak';
+  const status = summary.trades < 50 ? 'Need 50+ trades' : summary.profitFactor >= 1.5 && summary.expectancy > 0 ? 'Promising' : 'Weak';
   el.innerHTML = `
     <div><span>Forward trades</span><strong>${summary.trades}</strong></div>
     <div><span>Forward win rate</span><strong>${summary.winRate.toFixed(0)}%</strong></div>
@@ -151,17 +231,17 @@ function readinessItem(label, ok, note, warn = false) {
 
 function runLiveReadiness() {
   const forward = renderForwardTest();
-  const backtest = window.lastBacktestSummary || { trades:0, profitFactor:0, expectancy:0, maxDd:0 };
+  const backtest = window.lastBacktestSummary || { trades:0, profitFactor:0, expectancy:0, maxDd:0, sharpe:0, sortino:0 };
   const dailyLossLimit = Number(document.getElementById('daily-loss-limit')?.value || 2);
   const maxOpen = Number(document.getElementById('live-max-open')?.value || 3);
   const checks = [
     readinessItem('Broker execution', false, 'Alpaca paper adapter exists; live broker remains blocked.'),
-    readinessItem('Kill switch', false, 'Needs hard stop button and broker cancel-all.'),
+    readinessItem('Kill switch', true, 'Stops automation, disconnects streams, closes local paper trades, and sends Alpaca cancel/liquidate.'),
     readinessItem('Data health', connected && K.c.length > 50, connected ? 'Live stream and candles available.' : 'WebSocket not connected.', true),
     readinessItem('Max open positions', paperTrades.length <= maxOpen, `${paperTrades.length}/${maxOpen} open paper trades.`),
     readinessItem('Daily loss cap', dailyLossLimit <= 2, `Configured at ${dailyLossLimit}% max daily loss.`, dailyLossLimit > 2),
-    readinessItem('Cost-aware backtest', backtest.trades >= 30 && backtest.expectancy > 0 && backtest.profitFactor >= 1.15, `${backtest.trades} trades · PF ${backtest.profitFactor?.toFixed ? backtest.profitFactor.toFixed(2) : '0'} · ${backtest.expectancy?.toFixed ? backtest.expectancy.toFixed(2) : '0'}R exp.`, backtest.trades > 0),
-    readinessItem('Forward test', forward.trades >= 30 && forward.expectancy > 0 && forward.profitFactor >= 1.1, `${forward.trades} paper trades · ${forward.expectancy.toFixed(2)}R expectancy.`, forward.trades > 0),
+    readinessItem('Cost-aware backtest', backtest.trades >= 50 && backtest.expectancy > 0 && backtest.profitFactor >= 1.5, `${backtest.trades} trades · PF ${backtest.profitFactor?.toFixed ? backtest.profitFactor.toFixed(2) : '0'} · ${backtest.expectancy?.toFixed ? backtest.expectancy.toFixed(2) : '0'}R exp.`, backtest.trades > 0),
+    readinessItem('Forward test', forward.trades >= 50 && forward.expectancy > 0 && forward.profitFactor >= 1.5, `${forward.trades} paper trades · ${forward.expectancy.toFixed(2)}R expectancy.`, forward.trades > 0),
     readinessItem('Real-money mode', false, 'Intentionally blocked until all execution controls exist.'),
   ];
   const hardBlocks = checks.filter(c => !c.ok && !c.warn).length;

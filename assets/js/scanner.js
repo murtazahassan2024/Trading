@@ -43,6 +43,7 @@ async function scanMarkets() {
         riskPct: ind.risk?.riskPct ?? null,
         quality,
         price:ind.last,
+        closes:s.c.slice(-80),
         ind,
         sr,
         plan
@@ -52,8 +53,54 @@ async function scanMarkets() {
     }
   }));
   lastScannerRows = rows;
+  updateCorrelationCache(rows);
   renderScanner(rows);
   maybeAutoScout(rows);
+}
+
+function returnsFromCloses(closes) {
+  const out = [];
+  for (let i = 1; i < closes.length; i++) {
+    if (closes[i - 1] > 0) out.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  return out;
+}
+
+function pearsonCorrelation(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 30) return null;
+  const x = a.slice(-n);
+  const y = b.slice(-n);
+  const mx = x.reduce((s,v)=>s+v,0)/n;
+  const my = y.reduce((s,v)=>s+v,0)/n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const xv = x[i] - mx;
+    const yv = y[i] - my;
+    num += xv * yv;
+    dx += xv * xv;
+    dy += yv * yv;
+  }
+  return dx && dy ? num / Math.sqrt(dx * dy) : null;
+}
+
+function updateCorrelationCache(rows) {
+  const series = rows
+    .filter(row => !row.error && Array.isArray(row.closes) && row.closes.length > 30)
+    .reduce((acc,row) => {
+      acc[row.symbol] = returnsFromCloses(row.closes);
+      return acc;
+    }, {});
+  const cache = {};
+  Object.keys(series).forEach(a => {
+    cache[a] = {};
+    Object.keys(series).forEach(b => {
+      if (a === b) return;
+      const corr = pearsonCorrelation(series[a], series[b]);
+      if (Number.isFinite(corr)) cache[a][b] = corr;
+    });
+  });
+  correlationCache = cache;
 }
 
 function syncAutoScoutButton() {

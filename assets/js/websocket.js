@@ -1,6 +1,9 @@
 let sockets = [];
 let connected = false;
 let activeConnectionId = 0;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY_MS = 30000;
 
 function wsBase() {
   return Exchange.wsBase();
@@ -26,6 +29,9 @@ function pushMTFCandle(interval, candle) {
 
 function closeAll() {
   activeConnectionId++;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectAttempts = 0;
   sockets.forEach(s=>{try{s.close();}catch(e){}});
   sockets=[];
   connected=false;
@@ -56,6 +62,7 @@ function openWS(sym,tf) {
     if (connectionId !== activeConnectionId) return;
     setStatus('connected');
     connected=true;
+    reconnectAttempts = 0;
     hideOverlay();
     document.getElementById('cbtn').textContent='Disconnect';
     document.getElementById('cbtn').classList.add('live');
@@ -128,5 +135,12 @@ function openWS(sym,tf) {
     document.getElementById('cbtn').textContent='Connect';
     document.getElementById('cbtn').classList.remove('live');
     connected=false;
+    reconnectAttempts++;
+    const delay = Math.min(MAX_RECONNECT_DELAY_MS, 1000 * Math.pow(2, reconnectAttempts - 1));
+    pushAlert('!', '#f5c842', `WebSocket dropped. Reconnecting in ${(delay/1000).toFixed(0)}s...`);
+    reconnectTimer = setTimeout(() => {
+      if (connectionId !== activeConnectionId) return;
+      openWS(sym, tf);
+    }, delay);
   };
 }

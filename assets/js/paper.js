@@ -31,11 +31,90 @@ function tradeRiskMultiple(trade, price) {
 
 function tradeSizingSnapshot(entry, stop) {
   const {account, riskPct, feePct} = accountInputs();
-  const riskDollars = account * riskPct / 100;
+  const kellyCap = fractionalKellyRiskPct();
+  const adjustedRiskPct = adjustedRiskPctForStreak(kellyCap ? Math.min(riskPct, kellyCap) : riskPct);
+  const riskDollars = account * adjustedRiskPct / 100;
   const stopDistance = Math.abs(entry-stop);
   const qty = stopDistance > 0 ? riskDollars / stopDistance : 0;
   const notional = qty * entry;
-  return { accountSize: account, riskPct, feePct, riskDollars, qty, notional };
+  const impliedLeverage = account > 0 ? notional / account : 0;
+  return { accountSize: account, riskPct: adjustedRiskPct, configuredRiskPct: riskPct, feePct, riskDollars, qty, notional, impliedLeverage, kellyCap };
+}
+
+function consecutiveLosses() {
+  let streak = 0;
+  for (const trade of paperLedger) {
+    if (Number(trade.rMultiple || 0) < 0) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function adjustedRiskPctForStreak(baseRiskPct) {
+  const streak = consecutiveLosses();
+  if (streak >= 5) return baseRiskPct * 0.25;
+  if (streak >= 3) return baseRiskPct * 0.5;
+  return baseRiskPct;
+}
+
+function fractionalKellyRiskPct() {
+  if (paperLedger.length < 50) return null;
+  const wins = paperLedger.filter(t => Number(t.rMultiple || 0) > 0);
+  const losses = paperLedger.filter(t => Number(t.rMultiple || 0) < 0);
+  if (!wins.length || !losses.length) return null;
+  const winRate = wins.length / paperLedger.length;
+  const avgWin = wins.reduce((sum,t)=>sum + Number(t.rMultiple || 0), 0) / wins.length;
+  const avgLoss = Math.abs(losses.reduce((sum,t)=>sum + Number(t.rMultiple || 0), 0) / losses.length);
+  if (!avgLoss) return null;
+  const odds = avgWin / avgLoss;
+  const kelly = winRate - ((1 - winRate) / odds);
+  return Math.max(0, Math.min(2, kelly * 25));
+}
+
+function dailyClosedLossPct() {
+  const {account} = accountInputs();
+  if (!account) return 0;
+  const today = new Date().toDateString();
+  const lossDollars = paperLedger
+    .filter(t => t.closedAt && new Date(t.closedAt).toDateString() === today)
+    .reduce((sum,t) => {
+      const pnlR = Number(t.rMultiple || 0);
+      const riskDollars = Number(t.riskDollars || 0);
+      return pnlR < 0 ? sum + Math.abs(pnlR * riskDollars) : sum;
+    }, 0);
+  return lossDollars / account * 100;
+}
+
+function totalOpenRiskPct() {
+  const {account} = accountInputs();
+  if (!account) return 0;
+  const risk = paperTrades.reduce((sum, trade) => {
+    const sizing = tradeSizingFor(trade);
+    return sum + (Number(sizing?.riskDollars) || 0);
+  }, 0);
+  return risk / account * 100;
+}
+
+function hardRiskGate(symbol = currentSymbol()) {
+  const maxOpen = Number(document.getElementById('live-max-open')?.value || 3);
+  const dailyLimit = Number(document.getElementById('daily-loss-limit')?.value || 2);
+  const totalRiskCap = Math.max(0.25, dailyLimit);
+  const dailyLoss = dailyClosedLossPct();
+  const openRisk = totalOpenRiskPct();
+  if (riskLockout) return { ok:false, reason:'Risk lockout is active' };
+  if (dailyLoss >= dailyLimit) return { ok:false, reason:`Daily loss cap breached (${dailyLoss.toFixed(2)}% / ${dailyLimit}%)` };
+  if (paperTrades.length >= maxOpen) return { ok:false, reason:`Max open trades reached (${paperTrades.length}/${maxOpen})` };
+  if (openRisk >= totalRiskCap) return { ok:false, reason:`Total open risk cap reached (${openRisk.toFixed(2)}% / ${totalRiskCap}%)` };
+  if (symbol && paperTrades.some(trade => trade.symbol === symbol)) return { ok:false, reason:`${symbol} already has an open trade` };
+  const correlated = paperTrades.find(trade => {
+    const corr = correlationCache?.[symbol]?.[trade.symbol] ?? correlationCache?.[trade.symbol]?.[symbol];
+    return Number.isFinite(corr) && Math.abs(corr) >= 0.85;
+  });
+  if (correlated) {
+    const corr = correlationCache?.[symbol]?.[correlated.symbol] ?? correlationCache?.[correlated.symbol]?.[symbol];
+    return { ok:false, reason:`Correlation block: ${symbol} and ${correlated.symbol} are ${corr.toFixed(2)} correlated` };
+  }
+  return { ok:true, reason:'Risk checks passed', dailyLoss, openRisk };
 }
 
 function tradeSizingFor(trade) {
@@ -112,6 +191,12 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
   const symbol = options.symbol || currentSymbol();
   const activate = options.activate !== false;
   const isLong = side === 'LONG';
+  const gate = hardRiskGate(symbol);
+  if (!gate.ok) {
+    pushAlert('!', '#ff4d6d', `No trade opened: ${gate.reason}`);
+    updateAutoPaperStatus(`Waiting: ${gate.reason}`);
+    return false;
+  }
   if (mode === 'auto' && paperTrades.some(trade => trade.symbol === symbol)) return false;
   const sr = options.signalSnapshot || strategies(ind);
   const entryPlan = { ...(plan || positionPlan(ind, sr)), side };
@@ -120,33 +205,41 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
     pushAlert('!', '#f5c842', `Auto skipped ${side} ${symbol}: ${(entrySnapshot.quality?.blockers || ['quality gate failed']).slice(0, 2).join(', ')}`);
     return false;
   }
-  const entryStop = entryPlan.stopPrice ?? entryPlan.stop ?? (isLong ? ind.risk.longStop : ind.risk.shortStop);
+  const slipPct = Math.max(0, Number(document.getElementById('exec-slip')?.value || 0));
+  const fillPrice = typeof applyEntrySlip === 'function' ? applyEntrySlip(current, side, slipPct) : current;
+  const stopOffset = current - (entryPlan.stopPrice ?? entryPlan.stop ?? (isLong ? ind.risk.longStop : ind.risk.shortStop));
+  const entryStop = fillPrice - stopOffset;
+  const targetOffset = (isLong ? 1 : -1) * Math.abs(fillPrice - entryStop) * TARGET_R_MULTIPLE;
+  const partialOffset = (isLong ? 1 : -1) * Math.abs(fillPrice - entryStop) * PARTIAL_EXIT_R;
   const newTrade = {
     tradeId: crypto.randomUUID ? crypto.randomUUID() : `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     side,
     symbol,
-    entry: current,
+    entry: fillPrice,
     stop: entryStop,
     atr14: entryPlan.atr14 ?? ind.risk.atr14,
-    dynamicStop: entryPlan.dynamicStop ?? entryPlan.stopInfo?.dynamicStop ?? entryStop,
+    dynamicStop: entryStop,
     chandelierStop: entryPlan.chandelierStop ?? entryPlan.stopInfo?.chandelierStop ?? null,
     stopType: entryPlan.stopType || 'INITIAL',
     stopPrice: entryStop,
-    target: isLong ? ind.risk.longTarget : ind.risk.shortTarget,
+    target: fillPrice + targetOffset,
+    partialTarget: fillPrice + partialOffset,
+    partialExitFraction: PARTIAL_EXIT_FRACTION,
+    partialClosed: false,
     openedAt: new Date(),
     entrySignal: entryPlan?.side || 'NO TRADE',
     entrySnapshot,
     mode,
     lastExitStatus: null,
     lastPrice: current,
-    ...tradeSizingSnapshot(current, entryStop)
+    ...tradeSizingSnapshot(fillPrice, entryStop)
   };
   paperTrades.unshift(newTrade);
   if (activate || !activeTradeId) activeTradeId = newTrade.tradeId;
   paperTrade = syncPaperTradeSelection();
   syncTradeChartLines();
   if (chart) chart.update('none');
-  pushAlert(isLong?'▲':'▼', isLong?'#00e5a0':'#ff4d6d', `${mode === 'auto' ? 'Auto paper' : 'Paper'} ${side} opened at ${fmtPrice(current)}. Lines added to chart.`, {
+  pushAlert(isLong?'▲':'▼', isLong?'#00e5a0':'#ff4d6d', `${mode === 'auto' ? 'Auto paper' : 'Paper'} ${side} filled at ${fmtPrice(fillPrice)}. Lines added to chart.`, {
     persist:true,
     tradeId:newTrade.tradeId,
     symbol:newTrade.symbol,
@@ -209,6 +302,33 @@ function closePaperTrade(reason='manual', tradeId = activeTradeId, exitPrice = n
   persistAppStateSoon();
 }
 
+function partialClosePaperTrade(trade, exitPrice) {
+  if (!trade || trade.partialClosed) return;
+  const fraction = Number(trade.partialExitFraction || PARTIAL_EXIT_FRACTION);
+  const closedQty = Number(trade.qty || 0) * fraction;
+  const rMultiple = tradeRiskMultiple(trade, exitPrice);
+  paperLedger.unshift({
+    ...trade,
+    qty: closedQty,
+    exit: exitPrice,
+    closedAt: new Date(),
+    reason: 'partial',
+    pnl: computeTradePnl(trade, exitPrice),
+    rMultiple,
+    partial: true,
+  });
+  trade.qty = Number(trade.qty || 0) * (1 - fraction);
+  trade.notional = trade.qty * trade.entry;
+  trade.riskDollars = Number(trade.riskDollars || 0) * (1 - fraction);
+  trade.partialClosed = true;
+  trade.stop = trade.side === 'LONG' ? Math.max(trade.stop, trade.entry) : Math.min(trade.stop, trade.entry);
+  trade.stopPrice = trade.stop;
+  pushAlert('◒', '#f5c842', `Partial exit ${trade.side} ${trade.symbol}: closed ${(fraction * 100).toFixed(0)}% at ${fmtPrice(exitPrice)}.`);
+  renderLedger();
+  renderRiskDashboard();
+  persistAppStateSoon();
+}
+
 function toggleAutoPaper() {
   autoPaper = !autoPaper;
   const btn = document.getElementById('auto-paper-btn');
@@ -226,11 +346,13 @@ function exitSignalForTrade(trade, price, sr) {
   if (!trade) return {status:'Waiting', rule:'No open paper position'};
   if (trade.side === 'LONG') {
     if (price <= trade.stop) return {status:'SELL / STOP', rule:'Price hit long stop', exitPrice: trade.stop};
+    if (!trade.partialClosed && Number.isFinite(trade.partialTarget) && price >= trade.partialTarget) return {status:'SELL / PARTIAL', rule:`Price reached ${PARTIAL_EXIT_R}R partial exit`, exitPrice: trade.partialTarget, partial:true};
     if (price >= trade.target) return {status:'SELL / TARGET', rule:'Price hit long target', exitPrice: trade.target};
     if (sr && sr.cons === 'SELL' && sr.conf >= 58) return {status:'SELL / FLIP', rule:'Signal flipped against long', exitPrice: price};
   }
   if (trade.side === 'SHORT') {
     if (price >= trade.stop) return {status:'COVER / STOP', rule:'Price hit short stop', exitPrice: trade.stop};
+    if (!trade.partialClosed && Number.isFinite(trade.partialTarget) && price <= trade.partialTarget) return {status:'COVER / PARTIAL', rule:`Price reached ${PARTIAL_EXIT_R}R partial exit`, exitPrice: trade.partialTarget, partial:true};
     if (price <= trade.target) return {status:'COVER / TARGET', rule:'Price hit short target', exitPrice: trade.target};
     if (sr && sr.cons === 'BUY' && sr.conf >= 58) return {status:'COVER / FLIP', rule:'Signal flipped against short', exitPrice: price};
   }
@@ -256,7 +378,9 @@ function updatePaperTrades(price, sr=null) {
         trade.lastExitStatus = exit.status;
         emitPlatformAlert(exit.status, `${trade.side} ${trade.symbol}: ${exit.rule}`);
       }
-      if (autoPaper && trade.mode === 'auto') {
+      if (exit.partial) {
+        partialClosePaperTrade(trade, exit.exitPrice);
+      } else if (autoPaper && trade.mode === 'auto') {
         toClose.push({ tradeId: trade.tradeId, reason: exit.status.toLowerCase(), exitPrice: exit.exitPrice });
       }
     }
@@ -533,14 +657,14 @@ function renderRiskDashboard() {
   const wins = paperLedger.filter(t=>t.rMultiple>0).length;
   const totalR = paperLedger.reduce((a,t)=>a+t.rMultiple,0);
   const winRate = paperLedger.length ? wins/paperLedger.length*100 : null;
-  const openRisk = paperTrade ? Math.abs(paperTrade.entry-paperTrade.stop) / paperTrade.entry * 100 : null;
-  const losingStreak = paperLedger.reduce((streak,t)=>t.rMultiple<0?streak+1:0,0);
+  const openRisk = totalOpenRiskPct();
+  const losingStreak = consecutiveLosses();
   el.innerHTML = `
     <div><span>Trades</span><strong>${paperLedger.length}</strong></div>
     <div><span>Open now</span><strong>${paperTrades.length}</strong></div>
     <div><span>Win rate</span><strong>${winRate===null?'—':winRate.toFixed(0)+'%'}</strong></div>
     <div><span>Total R</span><strong style="color:${totalR>=0?'var(--accent)':'var(--accent2)'}">${totalR.toFixed(2)}R</strong></div>
-    <div><span>Open risk</span><strong>${openRisk===null?'—':openRisk.toFixed(2)+'%'}</strong></div>
+    <div><span>Open risk</span><strong>${openRisk.toFixed(2)}%</strong></div>
     <div><span>Losing streak</span><strong>${losingStreak}</strong></div>`;
 }
 

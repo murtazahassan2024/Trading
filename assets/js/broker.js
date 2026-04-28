@@ -247,6 +247,7 @@ async function closeAlpacaPosition(symbol) {
 async function killSwitch() {
   autoPaper = false;
   autoScout = false;
+  riskLockout = true;
   syncAutoScoutButton();
   const autoBtn = document.getElementById('auto-paper-btn');
   if (autoBtn) {
@@ -254,6 +255,7 @@ async function killSwitch() {
     autoBtn.classList.remove('active');
   }
   closeAll();
+  [...paperTrades].forEach(trade => closePaperTrade('kill switch', trade.tradeId, tradeClosePrice(trade)));
   const liquidated = await liquidateAlpacaPositions();
   if (!liquidated) await cancelAllAlpacaOrders();
   persistAppStateSoon();

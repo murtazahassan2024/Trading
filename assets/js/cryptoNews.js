@@ -28,6 +28,10 @@ const MACRO_ALERT_KEYWORDS = [
   'iran','russia','ukraine','oil','federal reserve','fed rate','interest rate','inflation','gdp',
   'recession','nuclear','sanctions','tariff','trade war','opec','dxy','dollar index'
 ];
+const SCHEDULED_EVENT_KEYWORDS = [
+  'fomc','cpi','ppi','nonfarm','payroll','jobs report','fed decision','rate decision',
+  'interest rate','federal reserve','inflation','gdp'
+];
 
 function normalizeNewsSymbols(symbols) {
   return [...new Set((symbols || [])
@@ -157,6 +161,12 @@ function neutralNewsSentiment() {
 
 function currentNewsSentiment() {
   return cryptoNewsOffline ? neutralNewsSentiment() : (latestNewsSentiment || neutralNewsSentiment());
+}
+
+function isMacroBlackoutActive(sentiment = currentNewsSentiment()) {
+  const headline = String(sentiment?.macroAlert || '').toLowerCase();
+  if (!headline) return false;
+  return SCHEDULED_EVENT_KEYWORDS.some(keyword => headline.includes(keyword));
 }
 
 function newsZoneLabel(zone) {

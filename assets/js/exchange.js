@@ -27,11 +27,12 @@ const Exchange = (() => {
         }));
       },
       async meta(symbol) {
-        const [funding, oi] = await Promise.all([
+        const [funding, oi, longShort] = await Promise.all([
           fetch(`${this.restBase()}/fapi/v1/premiumIndex?symbol=${symbol}`).then(r=>r.json()),
           fetch(`${this.restBase()}/fapi/v1/openInterest?symbol=${symbol}`).then(r=>r.json()),
+          fetch(`${this.restBase()}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`).then(r=>r.json()).catch(() => null),
         ]);
-        return { funding, openInterest: oi };
+        return { funding, openInterest: oi, longShort };
       },
       streams(symbol, interval) {
         const s = symbol.toLowerCase();

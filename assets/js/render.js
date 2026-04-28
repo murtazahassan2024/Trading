@@ -99,6 +99,7 @@ function renderPositionPlan(plan) {
       <span>Entry</span><strong>${fmtPrice(plan.entry)}</strong>
       <span>${stopLabel}</span><strong>${stopText}</strong>
       <span>Target</span><strong>${fmtPrice(plan.target)}</strong>
+      <span>Partial</span><strong>${Number.isFinite(plan.partialTarget) ? `${fmtPrice(plan.partialTarget)} (${PARTIAL_EXIT_FRACTION * 100}% at ${PARTIAL_EXIT_R}R)` : '—'}</strong>
       <span>Execution</span><strong>${plan.side === 'NO TRADE' ? 'Waiting for higher probability or cleaner risk' : 'Meets threshold'}</strong>
       <span>Why</span><strong>${plan.reason}</strong>
     </div>
@@ -122,12 +123,15 @@ function renderPositionSizing(plan = lastSignalSnapshot?.plan) {
     return;
   }
   const {account, riskPct, feePct} = accountInputs();
-  const riskDollars = account * riskPct / 100;
+  const adjustedRiskPct = typeof adjustedRiskPctForStreak === 'function' ? adjustedRiskPctForStreak(riskPct) : riskPct;
+  const riskDollars = account * adjustedRiskPct / 100;
   const stopDistance = Math.abs(plan.entry-stop);
   const qty = stopDistance > 0 ? riskDollars / stopDistance : 0;
   const notional = qty * plan.entry;
   const fees = notional * feePct / 100 * 2;
-  el.innerHTML = `Risk $${riskDollars.toFixed(2)} · Qty ${qty.toFixed(5)} · Notional $${notional.toFixed(2)} · est. round-trip fees $${fees.toFixed(2)}`;
+  const leverage = account > 0 ? notional / account : 0;
+  const kelly = typeof fractionalKellyRiskPct === 'function' ? fractionalKellyRiskPct() : null;
+  el.innerHTML = `Risk $${riskDollars.toFixed(2)} · Qty ${qty.toFixed(5)} · Notional $${notional.toFixed(2)} · implied leverage ${leverage.toFixed(2)}x · adj risk ${adjustedRiskPct.toFixed(2)}%${kelly ? ` · Kelly cap ${kelly.toFixed(2)}%` : ''} · est. fees $${fees.toFixed(2)}`;
 }
 
 function renderScanner(rows) {
@@ -203,6 +207,9 @@ function renderOB(asks,bids) {
   }
   const ma=Math.max(...ta.map(r=>parseFloat(r[1])));
   const mb=Math.max(...tb.map(r=>parseFloat(r[1])));
+  const askDepth=ta.reduce((sum,r)=>sum + parseFloat(r[0]) * parseFloat(r[1]), 0);
+  const bidDepth=tb.reduce((sum,r)=>sum + parseFloat(r[0]) * parseFloat(r[1]), 0);
+  orderBookImbalance = askDepth > 0 ? bidDepth / askDepth : null;
   document.getElementById('ob-asks').innerHTML=ta.map(r=>{
     const pct=(parseFloat(r[1])/ma*100).toFixed(0);
     return`<div class="ob-row"><div class="ob-bg" style="background:#ff4d6d;width:${pct}%"></div><div class="obp red">${parseFloat(r[0]).toLocaleString(undefined,{maximumFractionDigits:2})}</div><div class="obq">${parseFloat(r[1]).toFixed(3)}</div></div>`;
