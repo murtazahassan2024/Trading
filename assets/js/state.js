@@ -1,4 +1,3 @@
-let lev = 1;
 let chart = null;
 let volumeChart = null;
 let rsiChart = null;
@@ -9,6 +8,7 @@ let alertLog = [];
 let lastRSI = null, lastCons = null;
 let fundingTimer = null;
 let scanTimer = null;
+let currentFundingRate = null;
 let paperTrade = null;
 let paperTrades = [];
 let paperLedger = [];
@@ -40,6 +40,10 @@ function syncPaperTradeSelection() {
 
 const K = { o:[], h:[], l:[], c:[], v:[], t:[], labels:[] };
 const MAX = 200;
+const candles4h = [];
+const candles1h = [];
+const candles15m = [];
+const MTF_MAX = 60;
 const SCAN_SYMBOLS = [
   'BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','LINKUSDT','AVAXUSDT','LTCUSDT',
   'SUIUSDT','APTUSDT','NEARUSDT','OPUSDT','ARBUSDT','INJUSDT','SEIUSDT','WIFUSDT',

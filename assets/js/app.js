@@ -40,17 +40,42 @@ async function fetchKlines(sym,tf) {
   } catch(e){ console.warn('kline REST fail',e); return false; }
 }
 
+async function fetchMTFKlines(sym) {
+  resetMTFCandles();
+  const targets = [
+    ['4h', candles4h],
+    ['1h', candles1h],
+    ['15m', candles15m],
+  ];
+  await Promise.all(targets.map(async ([interval, store]) => {
+    const data = await fetchKlineData(sym, interval, MTF_MAX);
+    data.forEach(k => store.push({
+      time: k[0],
+      open: +k[1],
+      high: +k[2],
+      low: +k[3],
+      close: +k[4],
+      volume: +k[5],
+    }));
+  }));
+}
+
 async function fetchMeta(sym) {
   try {
     const {funding:fr, openInterest:oi}=await Exchange.meta(sym);
     if (fr.unavailable || oi.unavailable) {
+      currentFundingRate = null;
       document.getElementById('m-fund').textContent='N/A';
       document.getElementById('m-oi').textContent='N/A';
+      if (typeof renderFundingAdjustment === 'function') renderFundingAdjustment();
       return;
     }
     const fund=parseFloat(fr.lastFundingRate)*100;
+    currentFundingRate = parseFloat(fr.lastFundingRate);
     document.getElementById('m-fund').textContent=(fund>=0?'+':'')+fund.toFixed(4)+'%';
     document.getElementById('m-fund').style.color=fund>=0?'var(--gold)':'var(--accent2)';
+    if (typeof renderFundingAdjustment === 'function') renderFundingAdjustment();
+    if (K.c.length) runAnalysis();
     const oiVal=parseFloat(oi.openInterest);
     document.getElementById('m-oi').textContent=oiVal>=1000?(oiVal/1000).toFixed(2)+'K':oiVal.toFixed(2);
   } catch(e){}
@@ -62,9 +87,13 @@ async function toggleConnect(){
   const tf=document.getElementById('timeframe').value;
   showOverlay(`Fetching ${sym} historical klines...`);
   const ok=await fetchKlines(sym,tf);
+  try { await fetchMTFKlines(sym); }
+  catch(e) { console.warn('MTF kline REST fail', e); }
   if(ok){renderChart();runAnalysis();}
   document.getElementById('ovtxt').textContent='Opening WebSocket...';
   openWS(sym,tf);
+  if (typeof fetchCryptoNews === 'function') fetchCryptoNews([sym]);
+  if (typeof startNewsAgeTicker === 'function') startNewsAgeTicker();
   fetchMeta(sym);
   scanMarkets();
   if(fundingTimer)clearInterval(fundingTimer);

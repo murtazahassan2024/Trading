@@ -44,6 +44,39 @@ function tradeSizingFor(trade) {
   return tradeSizingSnapshot(trade.entry, trade.stop);
 }
 
+function currentCandles() {
+  return K.c.map((close, index) => ({
+    open: K.o[index],
+    high: K.h[index],
+    low: K.l[index],
+    close
+  }));
+}
+
+function refreshTradeTrailingStop(trade, candles = currentCandles()) {
+  if (!trade || (trade.side !== 'LONG' && trade.side !== 'SHORT') || !candles.length) return trade;
+  const atr14 = calcATR(candles);
+  if (!Number.isFinite(atr14)) return trade;
+  const dynamicStop = Number.isFinite(trade.dynamicStop)
+    ? trade.dynamicStop
+    : calcDynamicStop(trade.entry, atr14, trade.side);
+  const chandelierStop = calcChandelierExit(candles, atr14, trade.side, CHANDELIER_PERIOD, CHANDELIER_MULTIPLIER, trade.chandelierStop);
+  if (!Number.isFinite(chandelierStop)) return trade;
+  const candidateStop = trade.side === 'LONG'
+    ? Math.max(dynamicStop, chandelierStop)
+    : Math.min(dynamicStop, chandelierStop);
+  const tightenedStop = Number.isFinite(trade.stop)
+    ? (trade.side === 'LONG' ? Math.max(trade.stop, candidateStop) : Math.min(trade.stop, candidateStop))
+    : candidateStop;
+  trade.atr14 = atr14;
+  trade.dynamicStop = dynamicStop;
+  trade.chandelierStop = chandelierStop;
+  trade.stopType = tightenedStop === chandelierStop ? 'CHANDELIER' : 'INITIAL';
+  trade.stopPrice = tightenedStop;
+  trade.stop = tightenedStop;
+  return trade;
+}
+
 function tradeClosePrice(trade) {
   if (!trade) return null;
   if (trade.symbol === currentSymbol()) {
@@ -67,7 +100,7 @@ function selectPaperTrade(tradeId) {
     const exit = exitSignalForTrade(trade, price, lastSignalSnapshot);
     renderTradeStatus(trade, computeTradePnl(trade, price), exit.status, exit.rule);
   } else {
-    renderTradeStatus(null, null, 'Waiting', 'Open a paper long/short to track it');
+    renderTradeStatus(null, null, 'Waiting', 'Open a paper position to track it');
   }
   renderRiskDashboard();
   if (typeof previewAlpacaOrder === 'function') previewAlpacaOrder();
@@ -87,12 +120,18 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
     pushAlert('!', '#f5c842', `Auto skipped ${side} ${symbol}: ${(entrySnapshot.quality?.blockers || ['quality gate failed']).slice(0, 2).join(', ')}`);
     return false;
   }
+  const entryStop = entryPlan.stopPrice ?? entryPlan.stop ?? (isLong ? ind.risk.longStop : ind.risk.shortStop);
   const newTrade = {
     tradeId: crypto.randomUUID ? crypto.randomUUID() : `trade-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     side,
     symbol,
     entry: current,
-    stop: isLong ? ind.risk.longStop : ind.risk.shortStop,
+    stop: entryStop,
+    atr14: entryPlan.atr14 ?? ind.risk.atr14,
+    dynamicStop: entryPlan.dynamicStop ?? entryPlan.stopInfo?.dynamicStop ?? entryStop,
+    chandelierStop: entryPlan.chandelierStop ?? entryPlan.stopInfo?.chandelierStop ?? null,
+    stopType: entryPlan.stopType || 'INITIAL',
+    stopPrice: entryStop,
     target: isLong ? ind.risk.longTarget : ind.risk.shortTarget,
     openedAt: new Date(),
     entrySignal: entryPlan?.side || 'NO TRADE',
@@ -100,7 +139,7 @@ function openPaperTradeFromPlan(side, current, ind, plan, mode='manual', options
     mode,
     lastExitStatus: null,
     lastPrice: current,
-    ...tradeSizingSnapshot(current, isLong ? ind.risk.longStop : ind.risk.shortStop)
+    ...tradeSizingSnapshot(current, entryStop)
   };
   paperTrades.unshift(newTrade);
   if (activate || !activeTradeId) activeTradeId = newTrade.tradeId;
@@ -162,7 +201,7 @@ function closePaperTrade(reason='manual', tradeId = activeTradeId, exitPrice = n
     const exit = exitSignalForTrade(paperTrade, price, lastSignalSnapshot);
     renderTradeStatus(paperTrade, computeTradePnl(paperTrade, price), exit.status, exit.rule);
   } else {
-    renderTradeStatus(null, null, 'FLAT', 'Open a paper long/short to track it');
+    renderTradeStatus(null, null, 'FLAT', 'Open a paper position to track it');
   }
   renderLedger();
   renderRiskDashboard();
@@ -178,6 +217,7 @@ function toggleAutoPaper() {
     btn.classList.toggle('active', autoPaper);
   }
   pushAlert('A', autoPaper?'#7b6fff':'#f5c842', `Auto paper trading ${autoPaper?'enabled':'disabled'}`);
+  updateAutoPaperStatus();
   persistAppStateSoon();
   maybeAutoPaper();
 }
@@ -204,10 +244,12 @@ function updatePaperTrades(price, sr=null) {
   paperTrades.forEach(trade => {
     if (trade.symbol !== symbol) return;
     trade.lastPrice = price;
+    refreshTradeTrailingStop(trade);
     const exit = exitSignalForTrade(trade, price, sr);
     if (trade.tradeId === activeTradeId) {
       renderTradeStatus(trade, computeTradePnl(trade, price), exit.status, exit.rule);
       renderTradeDetail(false);
+      renderPositionPlan(lastSignalSnapshot?.plan);
     }
     if (exit.status !== 'HOLD') {
       if (trade.lastExitStatus !== exit.status) {
@@ -222,6 +264,8 @@ function updatePaperTrades(price, sr=null) {
   if (!paperTrades.some(trade => trade.tradeId === activeTradeId)) {
     syncPaperTradeSelection();
   }
+  syncTradeChartLines();
+  if (chart) chart.update('none');
   renderOpenTrades();
   toClose.forEach(item => {
     closePaperTrade(item.reason, item.tradeId, item.exitPrice);
@@ -253,23 +297,51 @@ function renderTradeStatus(trade, pnl, exitStatus, rule) {
 }
 
 function maybeAutoPaper() {
-  if (!autoPaper) return;
-  if (Date.now() - lastAutoActionAt < 10000) return;
+  if (!autoPaper) {
+    updateAutoPaperStatus('Auto paper is off.');
+    return;
+  }
+  if (Date.now() - lastAutoActionAt < 10000) {
+    updateAutoPaperStatus('Waiting: auto paper cooldown is active.');
+    return;
+  }
   const ind = compute();
   const sr = ind ? strategies(ind) : null;
   const plan = ind && sr ? positionPlan(ind, sr) : null;
-  if (!plan || (plan.side !== 'LONG' && plan.side !== 'SHORT')) return;
+  if (!plan || (plan.side !== 'LONG' && plan.side !== 'SHORT')) {
+    updateAutoPaperStatus(`Waiting: ${plan?.reason || 'need a higher-probability setup first.'}`);
+    return;
+  }
   const symbol = currentSymbol();
-  if (paperTrades.some(trade => trade.symbol === symbol)) return;
+  if (paperTrades.some(trade => trade.symbol === symbol)) {
+    updateAutoPaperStatus(`Waiting: ${symbol} already has an open paper trade.`);
+    return;
+  }
   const current = parseFloat((document.getElementById('m-price').textContent||'').replace(/[$,]/g,'')) || ind.last;
   const quality = tradeQuality(ind, sr, plan.side);
   if (!quality?.autoPass) {
     lastAutoActionAt = Date.now();
+    updateAutoPaperStatus(autoPaperQualityMessage(symbol, plan.side, quality));
     pushAlert('!', '#f5c842', `Auto skipped ${plan.side} ${symbol}: ${(quality?.blockers || ['quality gate failed']).slice(0, 2).join(', ')}`);
     return;
   }
+  updateAutoPaperStatus(`Ready: ${plan.side} ${symbol} passed auto quality checks.`);
   const opened = openPaperTradeFromPlan(plan.side, current, ind, plan, 'auto');
   if (opened) lastAutoActionAt = Date.now();
+}
+
+function autoPaperQualityMessage(symbol, side, quality) {
+  if (!quality) return `Waiting: ${side} ${symbol} quality gate failed.`;
+  const blockers = quality.blockers?.length ? `; ${quality.blockers.slice(0, 2).join(', ')}` : '';
+  const blockerCount = quality.blockers?.length || 0;
+  return `Waiting: ${side} ${symbol} score ${quality.score}/72, EV ${quality.expectedValueR}/0.20R, blockers ${blockerCount}/1${blockers}.`;
+}
+
+function updateAutoPaperStatus(message = null) {
+  const el = document.getElementById('auto-paper-status');
+  if (!el) return;
+  el.textContent = message || (autoPaper ? 'Auto paper is watching for a qualified probability setup.' : 'Auto paper is off.');
+  el.style.color = autoPaper ? 'var(--accent3)' : 'var(--muted)';
 }
 
 function renderOpenTrades() {
@@ -291,10 +363,24 @@ function renderOpenTrades() {
       <span>${fmtPrice(trade.entry)}</span>
       <span>${Number.isFinite(price) ? fmtPrice(price) : '—'}</span>
       <span style="color:${pnl >= 0 ? 'var(--accent)' : 'var(--accent2)'}">${pnl === null ? '—' : `${pnl.toFixed(2)}%`}</span>
+      <span class="ledger-note">${formatTradeAge(trade.openedAt)}</span>
       <span class="ledger-note">${exit.status}</span>
       <button class="mini-close-btn" type="button" onclick="event.stopPropagation(); closePaperTrade('manual','${trade.tradeId}')">Close</button>
     </div>`;
   }).join('');
+}
+
+function formatTradeAge(openedAt) {
+  if (!openedAt) return '—';
+  const opened = new Date(openedAt);
+  if (Number.isNaN(opened.getTime())) return '—';
+  const seconds = Math.max(0, Math.floor((Date.now() - opened.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${mins % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
 function formatTradeOpenedAt(openedAt) {
@@ -345,7 +431,7 @@ function renderTradeDetail(refreshChart = false) {
   setTradeDetailText('td-current-value', currentValue === null ? '—' : `$${currentValue.toFixed(2)}`, currentValue !== null && entryValue !== null ? pnlColor : '');
   setTradeDetailText('td-qty', qty === null ? '—' : qty.toFixed(5));
   setTradeDetailText('td-risk', riskDollars === null ? '—' : `$${riskDollars.toFixed(2)} · ${trade.riskPct ?? sizing?.riskPct ?? '—'}%`);
-  setTradeDetailText('td-stop', fmtPrice(trade.stop));
+  setTradeDetailText('td-stop', `${fmtPrice(trade.stop)} (${trade.stopType === 'CHANDELIER' ? 'Chandelier' : `ATR x ${ATR_STOP_MULTIPLIER.toFixed(1)}`})`);
   setTradeDetailText('td-target', fmtPrice(trade.target));
 
   const chartBtn = document.getElementById('td-open-chart');

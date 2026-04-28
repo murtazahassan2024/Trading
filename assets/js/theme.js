@@ -64,6 +64,7 @@ function applyPersistedState(state) {
     btn.textContent = `Auto Paper: ${autoPaper ? 'On' : 'Off'}`;
     btn.classList.toggle('active', autoPaper);
   }
+  if (typeof updateAutoPaperStatus === 'function') updateAutoPaperStatus();
   syncAutoScoutButton();
   renderOpenTrades();
   if (paperTrade) {
@@ -71,7 +72,7 @@ function applyPersistedState(state) {
     const exit = exitSignalForTrade(paperTrade, price, lastSignalSnapshot);
     renderTradeStatus(paperTrade, computeTradePnl(paperTrade, price), exit.status, exit.rule);
   } else {
-    renderTradeStatus(null, null, 'Waiting', 'Open a paper long/short to track it');
+    renderTradeStatus(null, null, 'Waiting', 'Open a paper position to track it');
   }
   renderTradeDetail(true);
   renderLedger();

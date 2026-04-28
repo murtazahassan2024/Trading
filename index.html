@@ -12,6 +12,7 @@
 <script src="assets/js/persistence.js" defer></script>
 <script src="assets/js/state.js" defer></script>
 <script src="assets/js/theme.js" defer></script>
+<script src="assets/js/cryptoNews.js" defer></script>
 <script src="assets/js/indicators.js" defer></script>
 <script src="assets/js/charts.js" defer></script>
 <script src="assets/js/render.js" defer></script>
@@ -50,15 +51,6 @@
     </select>
     <label class="testnet-label"><input type="checkbox" id="testnet"/> Testnet</label>
     <button class="connect-btn" id="cbtn" onclick="toggleConnect()">Disconnect</button>
-    <div class="lev-group">
-      <span class="lev-label">Lev:</span>
-      <button class="lev-btn active" onclick="setLev(this,1)">1x</button>
-      <button class="lev-btn" onclick="setLev(this,5)">5x</button>
-      <button class="lev-btn" onclick="setLev(this,10)">10x</button>
-      <button class="lev-btn" onclick="setLev(this,20)">20x</button>
-      <button class="lev-btn" onclick="setLev(this,50)">50x</button>
-      <span class="liq-warn" id="liq-warn"></span>
-    </div>
   </div>
 
   <div class="metrics-grid">
@@ -66,7 +58,7 @@
     <div class="metric"><div class="metric-label">Last Price</div><div class="metric-val" id="m-price">—</div><div class="metric-sub" id="m-psub">waiting</div></div>
     <div class="metric"><div class="metric-label">24h Change</div><div class="metric-val" id="m-chg">—</div><div class="metric-sub" id="m-chgsub">—</div></div>
     <div class="metric"><div class="metric-label">24h Volume</div><div class="metric-val purple" id="m-vol">—</div><div class="metric-sub">USDT notional</div></div>
-    <div class="metric"><div class="metric-label">Funding Rate</div><div class="metric-val gold" id="m-fund">—</div><div class="metric-sub">8h interval</div></div>
+    <div class="metric"><div class="metric-label">Funding Rate</div><div class="metric-val gold" id="m-fund">—</div><div class="metric-sub">8h interval</div><div class="funding-pill neutral" id="funding-zone-pill">Neutral</div><div class="funding-adjustment" id="funding-adjustment">Confidence: —</div></div>
     <div class="metric"><div class="metric-label">Open Interest</div><div class="metric-val" id="m-oi" style="color:var(--accent3)">—</div><div class="metric-sub">contracts</div></div>
   </div>
 
@@ -131,19 +123,20 @@
         </div>
       </div>
       <div class="chart-insights" id="chart-insights">
-        <div><span>Beginner read</span><strong>Waiting for enough candles...</strong></div>
-        <div><span>Expert read</span><strong>Waiting for regime and momentum stack...</strong></div>
+        <div><span>Market read</span><strong>Waiting for enough candles...</strong></div>
+        <div><span>Signal details</span><strong>Waiting for regime and momentum stack...</strong></div>
       </div>
     </div>
     <div class="signal-panel">
-      <div class="ptitle">Master signal</div>
+      <div class="ptitle">Signal</div>
       <div class="big-signal hold" id="big-signal">
         <div class="sig-label">CONSENSUS</div>
-        <div class="sig-word gold" id="sig-word"><span>FINAL DECISION: </span><strong>—</strong></div>
+        <div class="sig-word gold" id="sig-word"><span>PROBABILITY: </span><strong>—</strong></div>
         <div class="sig-conf" id="sig-conf">Awaiting live data...</div>
+        <div class="mtf-line" id="mtf-line"><strong>MTF: —</strong><span>Waiting for 4h / 1h / 15m alignment</span></div>
       </div>
       <div class="position-plan none" id="position-plan">
-        <div class="plan-side">NO TRADE</div>
+        <div class="plan-side">Probability pending</div>
         <div class="plan-grid">
           <span>Entry</span><strong>—</strong>
           <span>Stop</span><strong>—</strong>
@@ -164,6 +157,11 @@
       <button class="small-btn" type="button" onclick="runAIMarketBrief()">Analyze market scanner</button>
       <span id="ai-provider-state">Uses server-side API key only.</span>
     </div>
+    <div class="news-sentiment-panel" id="news-sentiment-panel">
+      <div class="news-head"><span class="news-zone neutral">Neutral</span><span class="news-updated">Updated —</span></div>
+      <div class="news-impact">News adj: —</div>
+      <div class="news-list"><div class="scan-empty">No news articles loaded yet.</div></div>
+    </div>
     <div class="ai-brief-grid" id="ai-brief">
       <div><span>Headline</span><strong>Waiting for AI analysis...</strong></div>
       <div><span>Regime</span><strong>—</strong></div>
@@ -182,12 +180,13 @@
       <button class="trade-btn flat-btn" type="button" onclick="closePaperTrade('manual')">Close</button>
       <button class="trade-btn auto-btn" id="auto-paper-btn" type="button" onclick="toggleAutoPaper()">Auto Paper: Off</button>
     </div>
+    <div class="auto-paper-status" id="auto-paper-status">Auto paper is off.</div>
     <div class="trade-status" id="trade-status">
       <div><span>Position</span><strong>FLAT</strong></div>
       <div><span>P/L</span><strong>—</strong></div>
       <div><span>Exit signal</span><strong>Waiting</strong></div>
       <div><span>Mode</span><strong>—</strong></div>
-      <div><span>Rule</span><strong>Open a paper long/short to track it</strong></div>
+      <div><span>Rule</span><strong>Open a paper position to track it</strong></div>
     </div>
     <div class="ptitle open-trades-title">Open trades</div>
     <div class="open-trades-table" id="open-paper-trades">

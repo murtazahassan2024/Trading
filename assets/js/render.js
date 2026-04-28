@@ -33,14 +33,21 @@ function renderIndic(ind) {
 
 function renderSignals(sr) {
   if (!sr) return;
-  const {list,cons,conf,plan}=sr;
+  const {list,probability,plan,mtf}=sr;
   lastSignalSnapshot = sr;
   const bs=document.getElementById('big-signal');
   const sw=document.getElementById('sig-word');
-  bs.className='big-signal '+(cons==='BUY'?'buy':cons==='SELL'?'sell':'hold');
-  sw.style.color=cons==='BUY'?'var(--accent)':cons==='SELL'?'var(--accent2)':'var(--gold)';
-  sw.innerHTML=`<span>FINAL DECISION: </span><strong>${cons}</strong>`;
-  document.getElementById('sig-conf').textContent=`Confidence: ${conf}% · edge ${sr.edge}% · ${sr.trending?'trend regime':'range regime'} · ${sr.riskOk?'risk ok':'risk elevated'}`;
+  const cls = probabilityClass(probability);
+  bs.className='big-signal '+cls;
+  sw.style.color=cls==='buy'?'var(--accent)':cls==='sell'?'var(--accent2)':'var(--gold)';
+  sw.innerHTML=`<span>PROBABILITY: </span><strong>${probability?.label || 'Balanced: 50% confidence'}</strong>`;
+  const componentText = probability?.components
+    ?.map(item => `${item.name} ${item.long}/${item.short}`)
+    .join(' · ') || 'Waiting for ensemble inputs';
+  document.getElementById('sig-conf').textContent=`Long ${probability?.long ?? 50}% · Short ${probability?.short ?? 50}% · funding ${probability?.baseConfidence ?? '—'}→${probability?.adjustedConfidence ?? '—'} · ${componentText}`;
+  renderFundingAdjustment(probability);
+  if (typeof renderNewsSentimentPanel === 'function') renderNewsSentimentPanel(probability);
+  renderMTFConfluence(mtf);
   renderPositionPlan(plan);
   renderPositionSizing(plan);
   document.getElementById('strat-list').innerHTML=list.map(s=>`
@@ -53,16 +60,46 @@ function renderSignals(sr) {
   }).join('');
 }
 
+function renderFundingAdjustment(probability = lastSignalSnapshot?.probability) {
+  const pill = document.getElementById('funding-zone-pill');
+  const detail = document.getElementById('funding-adjustment');
+  if (!pill || !detail) return;
+  const zone = probability?.fundingZone || classifyFundingRate(currentFundingRate);
+  pill.className = `funding-pill ${zone.toLowerCase().replaceAll('_', '-')}`;
+  pill.textContent = fundingPillText(zone);
+  if (!probability) {
+    detail.textContent = 'Confidence: —';
+    return;
+  }
+  detail.textContent = `Confidence: ${probability.baseConfidence}% → ${probability.adjustedConfidence}% (${probability.fundingModifier.toFixed(2)}x funding adj.)`;
+}
+
+function renderMTFConfluence(mtf) {
+  const el = document.getElementById('mtf-line');
+  if (!el) return;
+  const score = mtf?.confluenceScore ?? 0;
+  el.className = `mtf-line ${score === 3 ? 'full' : score === 2 ? 'partial' : 'none'}`;
+  el.innerHTML = `<strong>MTF: ${score}/3</strong><span>${mtf?.confluenceReason || 'Waiting for 4h / 1h / 15m alignment'}</span>`;
+}
+
 function renderPositionPlan(plan) {
   const el = document.getElementById('position-plan');
   if (!el || !plan) return;
   el.className = `position-plan ${plan.cls}`;
+  const label = plan.probability?.label || 'Probability pending';
+  const activeTrade = paperTrade && paperTrade.symbol === currentSymbol() ? paperTrade : null;
+  const stopLabel = activeTrade ? 'Trailing' : 'Stop';
+  const stopPrice = activeTrade ? activeTrade.stop : plan.stopPrice ?? plan.stop;
+  const stopText = activeTrade
+    ? `${fmtPrice(stopPrice)} (Chandelier)`
+    : `${fmtPrice(stopPrice)} (ATR x ${ATR_STOP_MULTIPLIER.toFixed(1)})`;
   el.innerHTML = `
-    <div class="plan-side">${plan.side}</div>
+    <div class="plan-side">${label}</div>
     <div class="plan-grid">
       <span>Entry</span><strong>${fmtPrice(plan.entry)}</strong>
-      <span>Stop</span><strong>${fmtPrice(plan.stop)}</strong>
+      <span>${stopLabel}</span><strong>${stopText}</strong>
       <span>Target</span><strong>${fmtPrice(plan.target)}</strong>
+      <span>Execution</span><strong>${plan.side === 'NO TRADE' ? 'Waiting for higher probability or cleaner risk' : 'Meets threshold'}</strong>
       <span>Why</span><strong>${plan.reason}</strong>
     </div>
   `;
@@ -79,13 +116,14 @@ function accountInputs() {
 function renderPositionSizing(plan = lastSignalSnapshot?.plan) {
   const el = document.getElementById('position-size-result');
   if (!el) return;
-  if (!plan || !Number.isFinite(plan.entry) || !Number.isFinite(plan.stop)) {
-    el.textContent = 'No valid stop distance yet. Wait for a LONG/SHORT plan or open a paper trade.';
+  const stop = plan?.stopPrice ?? plan?.stop;
+  if (!plan || !Number.isFinite(plan.entry) || !Number.isFinite(stop)) {
+    el.textContent = 'No valid stop distance yet. Wait for a higher-probability setup or open a paper trade.';
     return;
   }
   const {account, riskPct, feePct} = accountInputs();
   const riskDollars = account * riskPct / 100;
-  const stopDistance = Math.abs(plan.entry-plan.stop);
+  const stopDistance = Math.abs(plan.entry-stop);
   const qty = stopDistance > 0 ? riskDollars / stopDistance : 0;
   const notional = qty * plan.entry;
   const fees = notional * feePct / 100 * 2;
@@ -107,15 +145,16 @@ function renderScanner(rows) {
   renderPick('best-sell', bestSell, 'SHORT');
 
   table.innerHTML = valid
-    .sort((a,b)=>(b.quality?.score || Math.max(b.longScore,b.shortScore))-(a.quality?.score || Math.max(a.longScore,a.shortScore)))
+    .sort((a,b)=>(b.sr?.probability?.confidence || b.quality?.score || Math.max(b.longScore,b.shortScore))-(a.sr?.probability?.confidence || a.quality?.score || Math.max(a.longScore,a.shortScore)))
     .map(r=>{
-      const color=r.side==='LONG'?'var(--accent)':r.side==='SHORT'?'var(--accent2)':'var(--gold)';
-      const bar=clamp(r.quality?.score || Math.max(r.longScore,r.shortScore)*12,5,100);
+      const cls = probabilityClass(r.sr?.probability);
+      const color=cls==='buy'?'var(--accent)':cls==='sell'?'var(--accent2)':'var(--gold)';
+      const bar=clamp(r.sr?.probability?.confidence || r.quality?.score || Math.max(r.longScore,r.shortScore)*12,5,100);
       return `<div class="scan-row" onclick="selectSymbol('${r.symbol}')">
         <div class="scan-symbol">${r.symbol}</div>
-        <div class="scan-signal ${r.side==='LONG'?'buy':r.side==='SHORT'?'sell':'hold'}">${r.side}</div>
+        <div class="scan-signal ${cls}">${r.sr?.probability?.label || 'Balanced: 50% confidence'}</div>
         <div class="scan-bars scan-hide"><div class="scan-fill" style="width:${bar}%;background:${color}"></div></div>
-        <div>${r.conf}% · Q${r.quality?.score ?? '—'}</div>
+        <div>L ${r.sr?.probability?.long ?? 50}% · S ${r.sr?.probability?.short ?? 50}%</div>
         <div class="scan-hide">ADX ${r.adx}</div>
         <div class="scan-hide">EV ${r.quality?.expectedValueR ?? '—'}R · ${r.risk}</div>
       </div>`;
@@ -131,7 +170,7 @@ function renderPick(id, row, side) {
   el.innerHTML = `
     <span class="pick-label">${side === 'LONG' ? 'Best long watch' : 'Best short watch'}</span>
     <strong>${actionable ? row.symbol : 'No clean setup'}</strong>
-    <small>${side} · ${row.signal} · confidence ${row.conf}% · Q${row.quality?.score ?? '—'} · EV ${row.quality?.expectedValueR ?? '—'}R</small>
+    <small>${row.sr?.probability?.label || 'Balanced: 50% confidence'} · Q${row.quality?.score ?? '—'} · EV ${row.quality?.expectedValueR ?? '—'}R</small>
   `;
 }
 
@@ -178,15 +217,15 @@ function renderChartInsights(ind) {
   const el=document.getElementById('chart-insights');
   if(!el || !ind) return;
   const sr=strategies(ind);
-  const beginner = sr.cons==='BUY'
-    ? 'Bullish pressure is stronger. Prefer LONG only if stop distance fits your risk.'
+  const marketRead = sr.cons==='BUY'
+    ? `${sr.probability?.label || 'Long probability is higher'}. Use size only if stop distance fits your risk.`
     : sr.cons==='SELL'
-      ? 'Bearish pressure is stronger. Prefer SHORT only if stop distance fits your risk.'
-      : 'No clean edge. For learning, this is a wait-and-observe state.';
-  const expert = `ADX ${ind.adx??'—'} (${sr.trending?'trend':'range'}), RSI ${ind.rsi??'—'}, MACD ${ind.macd?ind.macd.hist.toFixed(3):'—'}, ATR ${ind.atr??'—'}%, volume ${ind.volRatio??'—'}x, candle ${ind.candle.pattern}.`;
+      ? `${sr.probability?.label || 'Short probability is higher'}. Use size only if stop distance fits your risk.`
+      : `${sr.probability?.label || 'Balanced: 50% confidence'}. This is a wait-and-observe state.`;
+  const signalDetails = `ADX ${ind.adx??'—'} (${sr.trending?'trend':'range'}), RSI ${ind.rsi??'—'}, MACD ${ind.macd?ind.macd.hist.toFixed(3):'—'}, ATR ${ind.atr??'—'}%, volume ${ind.volRatio??'—'}x, candle ${ind.candle.pattern}.`;
   el.innerHTML=`
-    <div><span>Beginner read</span><strong>${beginner}</strong></div>
-    <div><span>Expert read</span><strong>${expert}</strong></div>`;
+    <div><span>Market read</span><strong>${marketRead}</strong></div>
+    <div><span>Signal details</span><strong>${signalDetails}</strong></div>`;
 }
 
 function setStatus(s){
@@ -200,11 +239,4 @@ function hideOverlay(){document.getElementById('overlay').classList.add('hidden'
 function showOverlay(msg){
   document.getElementById('overlay').classList.remove('hidden');
   document.getElementById('ovtxt').textContent=msg;
-}
-
-function setLev(btn,l){
-  lev=l;
-  document.querySelectorAll('.lev-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('liq-warn').textContent=l>=5?`⚠ ${(100/l).toFixed(1)}% move = liq`:'';
 }

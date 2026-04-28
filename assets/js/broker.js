@@ -94,7 +94,7 @@ function previewAlpacaOrder() {
   const plan = alpacaOrderPlan();
   if (!preview) return;
   if (!plan.side || !['LONG','SHORT'].includes(plan.side)) {
-    preview.textContent = 'No LONG/SHORT plan selected. Select an open paper trade or wait for a strategy signal.';
+    preview.textContent = 'No executable probability setup selected. Select an open paper trade or wait for the ensemble threshold.';
     return;
   }
   if (!Number.isFinite(plan.qty) || plan.qty <= 0) {

@@ -6,6 +6,24 @@ function wsBase() {
   return Exchange.wsBase();
 }
 
+function mtfArrayForInterval(interval) {
+  if (interval === '4h') return candles4h;
+  if (interval === '1h') return candles1h;
+  if (interval === '15m') return candles15m;
+  return null;
+}
+
+function resetMTFCandles() {
+  [candles4h, candles1h, candles15m].forEach(list => { list.length = 0; });
+}
+
+function pushMTFCandle(interval, candle) {
+  const list = mtfArrayForInterval(interval);
+  if (!list) return;
+  list.push(candle);
+  if (list.length > MTF_MAX) list.splice(0, list.length - MTF_MAX);
+}
+
 function closeAll() {
   activeConnectionId++;
   sockets.forEach(s=>{try{s.close();}catch(e){}});
@@ -27,7 +45,7 @@ function closeAll() {
 function openWS(sym,tf) {
   const connectionId = ++activeConnectionId;
   const s=sym.toLowerCase();
-  const streams=Exchange.streams(sym, tf);
+  const streams=[...new Set(`${Exchange.streams(sym, tf)}/${['4h', '1h', '15m'].map(interval => `${s}@kline_${interval}`).join('/')}`.split('/'))].join('/');
   const url=`${wsBase()}?streams=${streams}`;
   setStatus('connecting');
 
@@ -52,6 +70,21 @@ function openWS(sym,tf) {
 
     if(stream.includes('@kline')){
       const k=data.k;
+      const interval = k.i;
+      if (['4h', '1h', '15m'].includes(interval) && k.x) {
+        pushMTFCandle(interval, {
+          time: k.t,
+          open: +k.o,
+          high: +k.h,
+          low: +k.l,
+          close: +k.c,
+          volume: +k.v
+        });
+        if (interval !== tf) {
+          runAnalysis();
+          return;
+        }
+      }
       if(k.x){
         K.t.push(k.t);K.o.push(+k.o);K.h.push(+k.h);K.l.push(+k.l);K.c.push(+k.c);K.v.push(+k.v);
         const d=new Date(k.t);

@@ -44,7 +44,7 @@ function applyExitSlip(price, side, slipPct) {
 
 function simulateTrade(series, side, entryIndex, plan, settings=backtestSettings()) {
   const entry = applyEntrySlip(series.c[entryIndex], side, settings.slippagePct);
-  const stop = plan.stop;
+  const stop = plan.stopPrice ?? plan.stop;
   const target = plan.target;
   const risk = Math.abs(entry-stop);
   const feeR = risk ? ((entry + target) * settings.feePct / 100) / risk : 0;
@@ -193,28 +193,34 @@ function simulateExecution() {
     side: paperTrade.side,
     entry: tradeClosePrice(paperTrade),
     stop: paperTrade.stop,
+    stopType: paperTrade.stopType,
+    stopPrice: paperTrade.stopPrice ?? paperTrade.stop,
+    probability: paperTrade.entrySnapshot?.consensus?.probability,
     target: paperTrade.target,
     reason: 'Selected open paper trade',
   } : (ind && sr ? positionPlan(ind, sr) : null);
   if (!plan || (plan.side !== 'LONG' && plan.side !== 'SHORT')) {
-    el.innerHTML = '<div><span>Order</span><strong>HOLD</strong></div><div><span>Reason</span><strong>No trade plan</strong></div>';
+    el.innerHTML = '<div><span>Probability</span><strong>No execution edge yet</strong></div><div><span>Reason</span><strong>No trade plan</strong></div>';
     return;
   }
   const symbol = plan.symbol || currentSymbol();
   const slipPct = Math.max(0, Number(document.getElementById('exec-slip')?.value || 0));
   const fill = applyEntrySlip(plan.entry, plan.side, slipPct);
-  const sizing = tradeSizingSnapshot(fill, plan.stop);
+  const stop = plan.stopPrice ?? plan.stop;
+  const sizing = tradeSizingSnapshot(fill, stop);
   const openFee = sizing.notional * sizing.feePct / 100;
-  const worstLoss = Math.abs(fill - plan.stop) * sizing.qty + openFee;
-  const liq = lev > 1 ? (plan.side === 'LONG' ? fill * (1 - 1 / lev) : fill * (1 + 1 / lev)) : null;
+  const worstLoss = Math.abs(fill - stop) * sizing.qty + openFee;
+  const stopLabel = plan.stopType === 'CHANDELIER' ? 'Trailing' : 'Stop';
+  const stopText = plan.stopType === 'CHANDELIER'
+    ? `${fmtPrice(stop)} (Chandelier)`
+    : `${fmtPrice(stop)} (ATR x ${ATR_STOP_MULTIPLIER.toFixed(1)})`;
   el.innerHTML = `
-    <div><span>Order</span><strong>${plan.side} ${symbol}</strong></div>
+    <div><span>Probability</span><strong>${plan.probability?.label || plan.side} ${symbol}</strong></div>
     <div><span>Est. fill</span><strong>${fmtPrice(fill)}</strong></div>
     <div><span>Qty</span><strong>${sizing.qty.toFixed(5)}</strong></div>
     <div><span>Notional</span><strong>$${sizing.notional.toFixed(2)}</strong></div>
     <div><span>Fees</span><strong>$${openFee.toFixed(2)} open</strong></div>
     <div><span>Worst planned loss</span><strong style="color:var(--accent2)">$${worstLoss.toFixed(2)}</strong></div>
-    <div><span>Stop</span><strong>${fmtPrice(plan.stop)}</strong></div>
-    <div><span>Target</span><strong>${fmtPrice(plan.target)}</strong></div>
-    <div><span>Est. liquidation</span><strong>${liq ? fmtPrice(liq) : 'No leverage'}</strong></div>`;
+    <div><span>${stopLabel}</span><strong>${stopText}</strong></div>
+    <div><span>Target</span><strong>${fmtPrice(plan.target)}</strong></div>`;
 }

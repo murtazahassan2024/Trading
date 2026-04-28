@@ -24,7 +24,7 @@ async function scanMarkets() {
       const data=await fetchKlineData(sym,tf,200);
       const s=seriesFromKlines(data);
       const ind=computeSeries(s.o,s.h,s.l,s.c,s.v);
-      const sr=strategies(ind);
+      const sr=strategies(ind, { fundingRatePct: null, skipMtf: true });
       const plan=positionPlan(ind, sr);
       const quality=tradeQuality(ind, sr, plan.side);
       const longScore=sr.buyScore-sr.sellScore;

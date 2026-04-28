@@ -66,7 +66,6 @@ function aiMarketContext() {
     symbol: currentSymbol(),
     selectedSymbolNote: 'The selected chart is secondary. Prefer the scanner universe when choosing what deserves attention.',
     timeframe: document.getElementById('timeframe')?.value || '5m',
-    leverage: lev,
     account: accountInputs(),
     market: {
       price: document.getElementById('m-price')?.textContent || '—',
@@ -75,7 +74,7 @@ function aiMarketContext() {
       funding: document.getElementById('m-fund')?.textContent || '—',
       openInterest: document.getElementById('m-oi')?.textContent || '—',
     },
-    consensus: sr ? { decision: sr.cons, confidence: sr.conf, edge: sr.edge, riskOk: sr.riskOk, trending: sr.trending } : null,
+    consensus: sr ? { probability: sr.probability, edge: sr.edge, riskOk: sr.riskOk, trending: sr.trending } : null,
     indicators: compactIndicators(ind),
     plan,
     strategyVotes: compactStrategyList(sr),
@@ -116,17 +115,23 @@ function renderAIBrief(brief) {
   if (!el) return;
   const focusList = Array.isArray(brief.focusList) ? brief.focusList.slice(0, 5) : [];
   const fallbackDecision = brief.action ? String(brief.action).match(/\b(BUY|SELL|HOLD)\b/i)?.[1]?.toUpperCase() : null;
+  const displayDecision = value => {
+    const decision = String(value || fallbackDecision || 'BALANCED').toUpperCase();
+    if (decision === 'BUY') return 'Long probability';
+    if (decision === 'SELL') return 'Short probability';
+    return 'Balanced probability';
+  };
   const focusHtml = focusList.map(item => `
     <div class="ai-decision-card">
       <span>${safeText(item.symbol || 'Market')}</span>
-      <strong class="${safeText((item.decision || item.side || fallbackDecision || 'HOLD').toLowerCase())}">
-        ${safeText(item.decision || item.side || fallbackDecision || 'HOLD')}
+      <strong class="${safeText((item.decision || item.side || fallbackDecision || 'hold').toLowerCase())}">
+        ${safeText(displayDecision(item.decision || item.side))}
       </strong>
       <em>${safeText(item.reason || item.why || brief.summary || brief.opportunity || 'No clean edge')}</em>
     </div>`).join('');
   el.innerHTML = `
     <div class="ai-summary-card"><span>Summary</span><strong>${safeText(brief.headline || 'Market scan')}</strong><em>${safeText(brief.summary || brief.action || brief.opportunity || 'Waiting for scanner edge')}</em></div>
-    ${focusHtml || '<div class="ai-decision-card"><span>Market</span><strong class="hold">HOLD</strong><em>No clean edge</em></div>'}`;
+    ${focusHtml || '<div class="ai-decision-card"><span>Market</span><strong class="hold">Balanced probability</strong><em>No clean edge</em></div>'}`;
 }
 
 async function runAIMarketBrief() {
