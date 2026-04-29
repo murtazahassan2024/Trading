@@ -40,11 +40,23 @@ function renderSignals(sr) {
   const cls = probabilityClass(probability);
   bs.className='big-signal '+cls;
   sw.style.color=cls==='buy'?'var(--accent)':cls==='sell'?'var(--accent2)':'var(--gold)';
-  sw.innerHTML=`<span>PROBABILITY: </span><strong>${probability?.label || 'Balanced: 50% confidence'}</strong>`;
-  const componentText = probability?.components
-    ?.map(item => `${item.name} ${item.long}/${item.short}`)
-    .join(' · ') || 'Waiting for ensemble inputs';
-  document.getElementById('sig-conf').textContent=`Long ${probability?.long ?? 50}% · Short ${probability?.short ?? 50}% · funding ${probability?.baseConfidence ?? '—'}→${probability?.adjustedConfidence ?? '—'} · ${componentText}`;
+  const label = probability?.label || 'Balanced: 50% confidence';
+  sw.innerHTML=`<span>PROBABILITY</span><strong>${label}</strong>`;
+  const sigConf = document.getElementById('sig-conf');
+  const componentHtml = probability?.components?.length
+    ? probability.components.map(item => `
+      <span class="sig-chip">
+        <em>${item.name}</em>
+        <strong>${item.long}/${item.short}</strong>
+      </span>`).join('')
+    : '<span class="sig-chip wide"><em>Ensemble</em><strong>Waiting</strong></span>';
+  sigConf.innerHTML = `
+    <div class="sig-probs">
+      <strong>Long ${probability?.long ?? 50}%</strong>
+      <strong>Short ${probability?.short ?? 50}%</strong>
+      <span>Funding ${probability?.baseConfidence ?? '—'}→${probability?.adjustedConfidence ?? '—'}</span>
+    </div>
+    <div class="sig-components">${componentHtml}</div>`;
   renderFundingAdjustment(probability);
   if (typeof renderNewsSentimentPanel === 'function') renderNewsSentimentPanel(probability);
   renderMTFConfluence(mtf);
@@ -78,14 +90,25 @@ function renderMTFConfluence(mtf) {
   const el = document.getElementById('mtf-line');
   if (!el) return;
   const score = mtf?.confluenceScore ?? 0;
+  const entry = mtf?.entryTimeframe || '15m';
+  const chartTf = mtf?.chartTimeframe || document.getElementById('timeframe')?.value || '—';
   el.className = `mtf-line ${score === 3 ? 'full' : score === 2 ? 'partial' : 'none'}`;
-  el.innerHTML = `<strong>MTF: ${score}/3</strong><span>${mtf?.confluenceReason || 'Waiting for 4h / 1h / 15m alignment'}</span>`;
+  el.innerHTML = `<strong>MTF: ${score}/3</strong><span>Auto entry gate: ${entry} · Chart/scanner: ${chartTf}</span><span>${mtf?.confluenceReason || 'Waiting for 4h / 1h / 15m alignment'}</span>`;
 }
 
 function renderPositionPlan(plan) {
   const el = document.getElementById('position-plan');
   if (!el || !plan) return;
   el.className = `position-plan ${plan.cls}`;
+  if (plan.side === 'NO TRADE') {
+    el.classList.add('compact');
+    el.innerHTML = `
+      <div class="plan-wait">
+        <span>Waiting</span>
+        <strong>${plan.reason || 'Need higher probability or cleaner risk'}</strong>
+      </div>`;
+    return;
+  }
   const label = plan.probability?.label || 'Probability pending';
   const activeTrade = paperTrade && paperTrade.symbol === currentSymbol() ? paperTrade : null;
   const stopLabel = activeTrade ? 'Trailing' : 'Stop';
@@ -156,7 +179,7 @@ function renderScanner(rows) {
       const bar=clamp(r.sr?.probability?.confidence || r.quality?.score || Math.max(r.longScore,r.shortScore)*12,5,100);
       return `<div class="scan-row" onclick="selectSymbol('${r.symbol}')">
         <div class="scan-symbol">${r.symbol}</div>
-        <div class="scan-signal ${cls}">${r.sr?.probability?.label || 'Balanced: 50% confidence'}</div>
+        <div class="scan-signal ${cls}">Raw ${r.sr?.probability?.label || 'Balanced: 50% confidence'}</div>
         <div class="scan-bars scan-hide"><div class="scan-fill" style="width:${bar}%;background:${color}"></div></div>
         <div>L ${r.sr?.probability?.long ?? 50}% · S ${r.sr?.probability?.short ?? 50}%</div>
         <div class="scan-hide">ADX ${r.adx}</div>
@@ -174,7 +197,7 @@ function renderPick(id, row, side) {
   el.innerHTML = `
     <span class="pick-label">${side === 'LONG' ? 'Best long watch' : 'Best short watch'}</span>
     <strong>${actionable ? row.symbol : 'No clean setup'}</strong>
-    <small>${row.sr?.probability?.label || 'Balanced: 50% confidence'} · Q${row.quality?.score ?? '—'} · EV ${row.quality?.expectedValueR ?? '—'}R</small>
+    <small>Raw ${row.sr?.probability?.label || 'Balanced: 50% confidence'} · Auto still needs 4h/1h/15m gate · Q${row.quality?.score ?? '—'}</small>
   `;
 }
 

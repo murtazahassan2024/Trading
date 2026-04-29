@@ -55,6 +55,7 @@ async function scanMarkets() {
   lastScannerRows = rows;
   updateCorrelationCache(rows);
   renderScanner(rows);
+  if (typeof scheduleAIMarketBrief === 'function') scheduleAIMarketBrief('scanner update');
   maybeAutoScout(rows);
 }
 

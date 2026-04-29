@@ -8,7 +8,7 @@ let cryptoNewsDisabled = false;
 let cryptoNewsStatus = '';
 let cryptoNewsSymbols = [];
 
-const CRYPTO_NEWS_URL = 'https://cryptocurrency.cv/api/news';
+const CRYPTO_NEWS_URL = '/api/crypto-news';
 const CRYPTO_NEWS_LIMIT = 10;
 const CRYPTO_NEWS_FETCH_LIMIT = 50;
 const CRYPTO_NEWS_POLL_MS = 90000;
@@ -73,6 +73,8 @@ async function fetchCryptoNews(symbols, schedule = true) {
     cryptoNewsOffline = true;
     cryptoNewsStatus = error.status === 402
       ? 'Paid news endpoint requires x402 payment — neutral mode'
+      : error.status === 404
+        ? 'News proxy missing — restart the local server'
       : 'News feed offline — retrying';
     if (error.status === 402) {
       cryptoNewsDisabled = true;

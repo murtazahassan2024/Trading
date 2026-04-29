@@ -4,6 +4,7 @@ const CHANDELIER_MULTIPLIER = 3.0;
 const TARGET_R_MULTIPLE = 2.0;
 const PARTIAL_EXIT_R = 1.0;
 const PARTIAL_EXIT_FRACTION = 0.5;
+const MTF_ENTRY_TIMEFRAME = '15m';
 const FUNDING_EXTREME_THRESHOLD = 0.001;
 const FUNDING_HIGH_THRESHOLD = 0.0005;
 const MIN_CONFIDENCE_THRESHOLD = 60;
@@ -272,13 +273,14 @@ function calcTimeframeBias(candles) {
   return { bias, ema20, ema50, rsi14 };
 }
 
-function calcMTFConfluence(bias4h, bias1h, signal15m) {
+function calcMTFConfluence(bias4h, bias1h, signal15m, entryTimeframe = MTF_ENTRY_TIMEFRAME) {
   const direction = signal15m === 'LONG' || signal15m === 'SHORT' ? signal15m : 'NO TRADE';
   if (direction === 'NO TRADE') {
     return {
       confluenceScore: 0,
       confluenceDirection: 'NO TRADE',
-      confluenceReason: '15m entry signal is not directional'
+      entryTimeframe,
+      confluenceReason: `${entryTimeframe} MTF entry signal is not directional`
     };
   }
   const long = direction === 'LONG';
@@ -294,8 +296,9 @@ function calcMTFConfluence(bias4h, bias1h, signal15m) {
   return {
     confluenceScore,
     confluenceDirection: confluenceScore === 3 ? direction : 'NO TRADE',
+    entryTimeframe,
     confluenceReason: confluenceScore === 3
-      ? '4h, 1h, and 15m are fully aligned'
+      ? `4h, 1h, and ${entryTimeframe} are fully aligned`
       : confluenceScore === 2
         ? `Partial confluence — waiting for full alignment${missing.length ? ` (${missing.join('; ')})` : ''}`
         : missing.join('; ') || 'MTF alignment is not ready'
@@ -314,7 +317,8 @@ function currentMTFConfluence() {
   const bias4h = calcTimeframeBias(candles4h);
   const bias1h = calcTimeframeBias(candles1h);
   const signal15m = mtfSignalFromCandles(candles15m);
-  return { ...calcMTFConfluence(bias4h, bias1h, signal15m), bias4h, bias1h, signal15m };
+  const chartTimeframe = document.getElementById('timeframe')?.value || '5m';
+  return { ...calcMTFConfluence(bias4h, bias1h, signal15m, MTF_ENTRY_TIMEFRAME), bias4h, bias1h, signal15m, chartTimeframe };
 }
 
 function adx(h,l,c,p=14) {

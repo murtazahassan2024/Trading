@@ -433,7 +433,11 @@ function maybeAutoPaper() {
   const sr = ind ? strategies(ind) : null;
   const plan = ind && sr ? positionPlan(ind, sr) : null;
   if (!plan || (plan.side !== 'LONG' && plan.side !== 'SHORT')) {
-    updateAutoPaperStatus(`Waiting: ${plan?.reason || 'need a higher-probability setup first.'}`);
+    const reason = plan?.reason || 'need a higher-probability setup first.';
+    const mtfNote = reason.includes('MTF entry')
+      ? ' Scanner confidence is raw for the dropdown timeframe; Auto Paper waits for 4h/1h/15m confluence.'
+      : '';
+    updateAutoPaperStatus(`Waiting: ${reason}.${mtfNote}`);
     return;
   }
   const symbol = currentSymbol();

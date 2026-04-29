@@ -161,6 +161,7 @@ async function runBacktest(symbol=document.getElementById('ticker').value.toUppe
   const summary = summarizeBacktest(trades);
   summary.outOfSample = true;
   summary.reasons = reasons;
+  trades.reasons = reasons;
   if (options.render !== false) {
     renderBacktestResults(symbol, summary);
     runLiveReadiness();
@@ -171,7 +172,7 @@ async function runBacktest(symbol=document.getElementById('ticker').value.toUppe
 async function runScannerBacktests() {
   const results = await Promise.all(SCAN_SYMBOLS.map(async s=>{
     const trades = await runBacktest(s, { render:false, limit:1000 });
-    return {symbol:s, trades, summary:summarizeBacktest(trades)};
+    return {symbol:s, trades, summary:summarizeBacktest(trades), reasons: trades.reasons || {}};
   }));
   const allTrades = results.flatMap(result => result.trades);
   const summary = summarizeBacktest(allTrades);
@@ -179,6 +180,12 @@ async function runScannerBacktests() {
   summary.symbolCount = results.length;
   const best = [...results].sort((a,b)=>b.summary.totalR-a.summary.totalR)[0];
   summary.bestSymbol = best?.symbol || '—';
+  summary.reasons = results.reduce((acc,result) => {
+    Object.entries(result.reasons || {}).forEach(([reason,count]) => {
+      acc[reason] = (acc[reason] || 0) + count;
+    });
+    return acc;
+  }, {});
   renderBacktestResults(`Scanner set · best ${summary.bestSymbol}`, summary);
   runLiveReadiness();
 }

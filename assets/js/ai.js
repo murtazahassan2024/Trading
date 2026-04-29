@@ -7,6 +7,11 @@ function compactStrategyList(sr) {
   }));
 }
 
+let aiBriefTimer = null;
+let aiBriefInFlight = false;
+let lastAIBriefAt = 0;
+const AI_BRIEF_MIN_INTERVAL_MS = 90000;
+
 function compactIndicators(ind) {
   if (!ind) return null;
   return {
@@ -60,9 +65,11 @@ function aiMarketContext() {
   const scannerUniverse = [...(lastScannerRows || [])]
     .filter(row => !row.error)
     .sort((a,b) => Math.max(b.longScore,b.shortScore)-Math.max(a.longScore,a.shortScore))
+    .slice(0, 50)
     .map(compactScannerRow);
   return {
     mode: 'scanner-first',
+    scannerUniverseCount: (lastScannerRows || []).filter(row => !row.error).length,
     symbol: currentSymbol(),
     selectedSymbolNote: 'The selected chart is secondary. Prefer the scanner universe when choosing what deserves attention.',
     timeframe: document.getElementById('timeframe')?.value || '5m',
@@ -115,28 +122,64 @@ function renderAIBrief(brief) {
   if (!el) return;
   const focusList = Array.isArray(brief.focusList) ? brief.focusList.slice(0, 5) : [];
   const fallbackDecision = brief.action ? String(brief.action).match(/\b(BUY|SELL|HOLD)\b/i)?.[1]?.toUpperCase() : null;
-  const displayDecision = value => {
-    const decision = String(value || fallbackDecision || 'BALANCED').toUpperCase();
-    if (decision === 'BUY') return 'Long probability';
-    if (decision === 'SELL') return 'Short probability';
-    return 'Balanced probability';
+  const decisionClass = value => {
+    const decision = String(value || fallbackDecision || 'HOLD').toUpperCase();
+    if (decision === 'BUY' || decision === 'SELL' || decision === 'HOLD' || decision === 'AVOID') return decision.toLowerCase();
+    return 'hold';
+  };
+  const cardTitle = item => {
+    const decision = String(item.decision || item.side || fallbackDecision || 'HOLD').toUpperCase();
+    const confidence = String(item.confidence || item.conf || 'LOW').toUpperCase();
+    const edge = String(item.edge || 'NONE').toUpperCase().replaceAll('_', ' ');
+    return [decision, confidence, edge === 'NONE' ? null : edge].filter(Boolean).join(' · ');
   };
   const focusHtml = focusList.map(item => `
     <div class="ai-decision-card">
       <span>${safeText(item.symbol || 'Market')}</span>
-      <strong class="${safeText((item.decision || item.side || fallbackDecision || 'hold').toLowerCase())}">
-        ${safeText(displayDecision(item.decision || item.side))}
+      <strong class="${safeText(decisionClass(item.decision || item.side))}">
+        ${safeText(cardTitle(item))}
       </strong>
       <em>${safeText(item.reason || item.why || brief.summary || brief.opportunity || 'No clean edge')}</em>
     </div>`).join('');
   el.innerHTML = `
     <div class="ai-summary-card"><span>Summary</span><strong>${safeText(brief.headline || 'Market scan')}</strong><em>${safeText(brief.summary || brief.action || brief.opportunity || 'Waiting for scanner edge')}</em></div>
-    ${focusHtml || '<div class="ai-decision-card"><span>Market</span><strong class="hold">Balanced probability</strong><em>No clean edge</em></div>'}`;
+    ${focusHtml || '<div class="ai-decision-card"><span>Market</span><strong class="hold">HOLD · LOW</strong><em>No clean edge</em></div>'}`;
 }
 
-async function runAIMarketBrief() {
+function localMarketBrief(error = null) {
+  const rows = [...(lastScannerRows || [])].filter(row => !row.error);
+  const ranked = rows
+    .filter(row => row.sr?.probability)
+    .sort((a,b)=>(b.sr.probability.confidence || 0)-(a.sr.probability.confidence || 0));
+  const actionable = ranked.filter(row => row.side === 'LONG' || row.side === 'SHORT').slice(0, 5);
+  const fallback = ranked.slice(0, 5);
+  const focus = (actionable.length ? actionable : fallback).map(row => ({
+    symbol: row.symbol,
+    decision: row.side === 'LONG' ? 'BUY' : row.side === 'SHORT' ? 'SELL' : 'HOLD',
+    confidence: row.sr?.probability?.confidence >= 70 ? 'HIGH' : row.sr?.probability?.confidence >= 55 ? 'MEDIUM' : 'LOW',
+    edge: row.regime === 'Trend' || row.adx >= 25 ? 'MOMENTUM' : 'NONE',
+    reason: row.plan?.reason || row.sr?.probability?.label || `${row.conf || 0}% confidence`,
+  }));
+  return {
+    headline: actionable.length ? 'Scanner edge found' : 'No clean scanner edge',
+    summary: error ? `Local fallback: ${error.message}` : 'Auto scanner summary',
+    focusList: focus.length ? focus : [{ symbol: currentSymbol(), decision: 'HOLD', reason: 'Waiting for scanner data' }],
+  };
+}
+
+function scheduleAIMarketBrief(reason = 'scanner') {
+  if (aiBriefTimer) clearTimeout(aiBriefTimer);
+  const elapsed = Date.now() - lastAIBriefAt;
+  const delay = Math.max(2500, AI_BRIEF_MIN_INTERVAL_MS - elapsed);
+  aiBriefTimer = setTimeout(() => runAIMarketBrief({ automatic:true, reason }), delay);
+}
+
+async function runAIMarketBrief(options = {}) {
+  if (aiBriefInFlight) return;
+  if (options.automatic && Date.now() - lastAIBriefAt < AI_BRIEF_MIN_INTERVAL_MS) return;
+  aiBriefInFlight = true;
   const state = document.getElementById('ai-provider-state');
-  if (state) state.textContent = 'Scanning market list...';
+  if (state) state.textContent = options.automatic ? 'Auto-analyzing scanner...' : 'Scanning market list...';
   try {
     const response = await fetch('/api/ai/market-brief', {
       method: 'POST',
@@ -146,13 +189,13 @@ async function runAIMarketBrief() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'AI analysis failed');
     renderAIBrief(data.brief || {});
-    if (state) state.textContent = `${data.provider} · ${data.model}`;
+    lastAIBriefAt = Date.now();
+    if (state) state.textContent = `${data.provider} · ${data.model} · auto refresh on`;
   } catch (error) {
-    renderAIBrief({
-      headline: 'AI analysis unavailable',
-      risk: error.message,
-      action: 'Check server environment keys and restart the app.',
-    });
-    if (state) state.textContent = 'AI request failed.';
+    renderAIBrief(localMarketBrief(error));
+    lastAIBriefAt = Date.now();
+    if (state) state.textContent = `AI request failed; using local scanner fallback. ${error.message}`;
+  } finally {
+    aiBriefInFlight = false;
   }
 }

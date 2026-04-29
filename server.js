@@ -48,7 +48,7 @@ function readJson(req) {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
-      if (body.length > 120000) {
+      if (body.length > 1000000) {
         reject(new Error('Request body too large'));
         req.destroy();
       }
@@ -62,26 +62,71 @@ function readJson(req) {
 }
 
 function aiConfig() {
-  const googleKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-  const provider = (process.env.AI_PROVIDER || (googleKey ? 'google' : process.env.OPENAI_API_KEY ? 'openai' : process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.DEEPSEEK_API_KEY ? 'deepseek' : '')).toLowerCase();
-  if (provider === 'google' || provider === 'gemini') return { provider: 'google', key: googleKey, model: process.env.GOOGLE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash' };
-  if (provider === 'anthropic') return { provider, key: process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest' };
+  const openRouterKey = process.env.OPENROUTER_API_KEY || process.env.openrouter_api_key;
+  const provider = (process.env.AI_PROVIDER || (openRouterKey ? 'openrouter' : process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPSEEK_API_KEY ? 'deepseek' : '')).toLowerCase();
+  if (provider === 'openrouter') return {
+    provider,
+    key: openRouterKey,
+    model: process.env.OPENROUTER_MODEL || process.env.openrouter_model || 'openrouter/auto',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    headers: {
+      'HTTP-Referer': process.env.APP_URL || 'http://localhost:5173',
+      'X-Title': process.env.APP_NAME || 'SignalOS',
+    },
+  };
   if (provider === 'deepseek') return { provider, key: process.env.DEEPSEEK_API_KEY, model: process.env.DEEPSEEK_MODEL || 'deepseek-chat' };
   return { provider: 'openai', key: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || 'gpt-4o-mini' };
 }
 
 function aiPrompt(context) {
-  return `You are a cautious AI market coach for a paper-trading crypto dashboard.
-Use only the supplied JSON. Do not claim certainty or guarantee profit.
-The user wants scanner-wide attention guidance, not analysis anchored to only the selected symbol.
-First inspect scannerUniverse/scannerLeaders, then identify which symbols deserve attention because of trend strength, confidence, edge, momentum, risk, or unusual disagreement.
-Be extremely brief.
-Return valid JSON with keys: headline, summary, focusList.
-headline must be 7 words or fewer.
-summary must be 12 words or fewer.
-focusList must be an array of 1 to 5 objects with keys: symbol, decision, reason.
-decision must be exactly one of: BUY, SELL, HOLD.
-reason must be 8 words or fewer.
+  return `You are a sharp, concise AI market coach embedded in a live crypto futures paper-trading dashboard.
+Use ONLY the supplied JSON. Never claim certainty or guarantee profit.
+Your job: scan ALL symbols in scannerUniverse/scannerLeaders and surface the 2–5 that genuinely deserve attention right now.
+
+DATA MAPPING — read these fields directly from each symbol in the JSON:
+- confidence field → use this directly to set your confidence output (high number = HIGH, mid = MEDIUM, low = LOW)
+- edge field → use this directly to set your edge output
+- signal or decision field → use this for BUY/SELL/HOLD/AVOID
+- adx field → if > 25, regime is trending; if < 20, it is choppy
+- rsi field → if > 55 with MACD positive = MOMENTUM edge; if > 70 or < 30 = REVERSAL edge
+- fundingRate → if absolute value > 0.001 = HIGH_FUNDING risk flag
+
+DECISION RULES — do not default to HOLD:
+- If the symbol's own signal/decision field says BUY or LONG → output BUY
+- If the symbol's own signal/decision field says SELL or SHORT → output SELL
+- HOLD only if the signal is genuinely neutral or conflicting
+- AVOID only if risk flags are present alongside a weak signal
+- You must output at least one BUY or SELL across the entire focusList if any symbol has a non-neutral signal
+
+CRITICAL RULES:
+- Do NOT default everything to HOLD. Read the actual signal/decision field from each symbol.
+- Do NOT return NONE edge if RSI and MACD data exists — derive the edge from the data.
+- Surface genuine differences between symbols — not every symbol is the same.
+
+In your reason field, always cite specific values from the JSON.
+Good: "ADX 55, RSI 62, signal BUY"
+Bad: "Strong trend, neutral signal"
+
+Return ONLY valid JSON. No prose, no markdown, no explanation outside the JSON.
+
+Required shape — no extra keys, no deviation:
+{
+  "headline": "5–7 words capturing dominant market theme",
+  "regime": "TRENDING | RANGING | CHOPPY | MIXED",
+  "summary": "One sentence, max 15 words, scanner-wide mood",
+  "focusList": [
+    {
+      "symbol": "BTCUSDT",
+      "decision": "BUY | SELL | HOLD | AVOID",
+      "confidence": "HIGH | MEDIUM | LOW",
+      "edge": "MOMENTUM | BREAKOUT | REVERSAL | MEAN_REVERT | NONE",
+      "reason": "Max 12 words — must cite at least one specific number from the data",
+      "riskFlag": "NONE | HIGH_FUNDING | OI_SPIKE | OVEREXTENDED | LOW_VOLUME"
+    }
+  ],
+  "coachNote": "One actionable behavioral nudge for the trader. Max 18 words."
+}
+
 Context JSON:
 ${JSON.stringify(context).slice(0, 18000)}`;
 }
@@ -96,17 +141,22 @@ function extractJson(text) {
   }
 }
 
-async function askOpenAICompatible({ key, model, baseUrl }, context) {
+async function askOpenAICompatible({ key, model, baseUrl, headers = {} }, context) {
+  const isOpenRouter = String(baseUrl || '').includes('openrouter.ai');
+  const wantsJsonMode = !isOpenRouter;
+  const maxTokens = isOpenRouter ? 700 : 450;
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${key}`,
+      ...headers,
     },
     body: JSON.stringify({
       model,
       temperature: 0.2,
-      response_format: { type: 'json_object' },
+      max_tokens: maxTokens,
+      ...(wantsJsonMode ? { response_format: { type: 'json_object' } } : {}),
       messages: [
         { role: 'system', content: 'Return only valid JSON.' },
         { role: 'user', content: aiPrompt(context) },
@@ -116,50 +166,6 @@ async function askOpenAICompatible({ key, model, baseUrl }, context) {
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error?.message || `AI request failed: ${response.status}`);
   return extractJson(data.choices?.[0]?.message?.content || '{}');
-}
-
-async function askAnthropic({ key, model }, context) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 450,
-      temperature: 0.2,
-      system: 'Return only valid JSON.',
-      messages: [{ role: 'user', content: aiPrompt(context) }],
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `Anthropic request failed: ${response.status}`);
-  return extractJson(data.content?.map(part => part.text || '').join('\n') || '{}');
-}
-
-async function askGoogle({ key, model }, context) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-goog-api-key': key,
-    },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: aiPrompt(context) }] }],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: 'application/json',
-      },
-      systemInstruction: {
-        parts: [{ text: 'Return only valid JSON.' }],
-      },
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `Google AI request failed: ${response.status}`);
-  return extractJson(data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('\n') || '{}');
 }
 
 async function aiMarketBrief(req, res) {
@@ -185,17 +191,12 @@ async function aiMarketBrief(req, res) {
       return;
     }
     let brief;
-    if (config.provider === 'anthropic') {
-      brief = await askAnthropic(config, context);
-    } else if (config.provider === 'google') {
-      brief = await askGoogle(config, context);
-    } else {
-      brief = await askOpenAICompatible({
-        key: config.key,
-        model: config.model,
-        baseUrl: config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1',
-      }, context);
-    }
+    brief = await askOpenAICompatible({
+      key: config.key,
+      model: config.model,
+      baseUrl: config.baseUrl || (config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1'),
+      headers: config.headers,
+    }, context);
     send(res, 200, JSON.stringify({ provider: config.provider, model: config.model, brief }), {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
@@ -419,6 +420,96 @@ async function proxyBinance(req, res, pathname, search) {
   }
 }
 
+function decodeXml(value = '') {
+  return String(value)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function tagValue(item, tag) {
+  const match = item.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  return match ? decodeXml(match[1]) : '';
+}
+
+function parseRssItems(xml, source, limit = 10) {
+  const items = String(xml || '').match(/<item[\s\S]*?<\/item>/gi) || [];
+  return items.slice(0, limit).map(item => ({
+    title: tagValue(item, 'title'),
+    url: tagValue(item, 'link') || tagValue(item, 'guid'),
+    published_at: tagValue(item, 'pubDate') || tagValue(item, 'dc:date') || new Date().toISOString(),
+    source,
+    coins: [],
+  })).filter(article => article.title && article.url);
+}
+
+async function fetchRssNews(limit = 10) {
+  const feeds = [
+    ['CoinTelegraph', 'https://cointelegraph.com/rss'],
+    ['CoinDesk', 'https://www.coindesk.com/arc/outboundfeeds/rss/'],
+    ['Decrypt', 'https://decrypt.co/feed'],
+  ];
+  const results = await Promise.allSettled(feeds.map(async ([source, url]) => {
+    const response = await fetch(url, { headers: { 'user-agent': 'SignalOS local dev server' } });
+    if (!response.ok) throw new Error(`${source} RSS ${response.status}`);
+    return parseRssItems(await response.text(), source, limit);
+  }));
+  return results
+    .flatMap(result => result.status === 'fulfilled' ? result.value : [])
+    .sort((a,b) => new Date(b.published_at) - new Date(a.published_at))
+    .slice(0, limit);
+}
+
+async function cryptoNewsApi(req, res, url) {
+  const limit = Math.min(Number(url.searchParams.get('limit') || 10), 50);
+  try {
+    const upstream = `https://cryptocurrency.cv/api/news?limit=${limit}`;
+    const response = await fetch(upstream, {
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'Mozilla/5.0 SignalOS local dev server',
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    const articles = Array.isArray(data.articles) ? data.articles : [];
+    if (response.ok && articles.length) {
+      send(res, 200, JSON.stringify({ articles, source: 'cryptocurrency.cv', fallback: false }), {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      return;
+    }
+    const rssArticles = await fetchRssNews(limit);
+    send(res, 200, JSON.stringify({
+      articles: rssArticles,
+      source: 'rss-fallback',
+      fallback: true,
+      upstreamStatus: response.status,
+      upstreamCode: data.code || null,
+    }), {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+  } catch (error) {
+    try {
+      const rssArticles = await fetchRssNews(limit);
+      send(res, 200, JSON.stringify({ articles: rssArticles, source: 'rss-fallback', fallback: true, error: error.message }), {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+    } catch (fallbackError) {
+      send(res, 502, JSON.stringify({ error: 'Crypto news fetch failed', detail: fallbackError.message }), {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+    }
+  }
+}
+
 async function fetchCoinbaseKlines(search) {
   const params = new URLSearchParams(search);
   const symbol = params.get('symbol') || 'BTCUSDT';
@@ -472,6 +563,10 @@ function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/api/ai/market-brief' && req.method === 'POST') {
     aiMarketBrief(req, res);
+    return;
+  }
+  if (url.pathname === '/api/crypto-news') {
+    cryptoNewsApi(req, res, url);
     return;
   }
   if (url.pathname.startsWith('/api/alpaca/')) {
