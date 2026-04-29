@@ -64,8 +64,8 @@ function readJson(req) {
 function aiConfig() {
   const openRouterKey = process.env.OPENROUTER_API_KEY || process.env.openrouter_api_key;
   const provider = (process.env.AI_PROVIDER || (openRouterKey ? 'openrouter' : process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPSEEK_API_KEY ? 'deepseek' : '')).toLowerCase();
-  if (provider === 'openrouter') return {
-    provider,
+  if (provider === 'openrouter' || (openRouterKey && provider !== 'openai' && provider !== 'deepseek')) return {
+    provider: 'openrouter',
     key: openRouterKey,
     model: process.env.OPENROUTER_MODEL || process.env.openrouter_model || 'openrouter/auto',
     baseUrl: 'https://openrouter.ai/api/v1',
