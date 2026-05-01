@@ -38,6 +38,7 @@ function collectPersistedState() {
     accountSize: document.getElementById('acct-size')?.value || '10000',
     riskPct: document.getElementById('risk-pct')?.value || '1',
     feePct: document.getElementById('fee-pct')?.value || '0.05',
+    liveMaxOpen: document.getElementById('live-max-open')?.value || '3',
   };
 }
 
@@ -57,6 +58,7 @@ function applyPersistedState(state) {
   if (state.accountSize) document.getElementById('acct-size').value = state.accountSize;
   if (state.riskPct) document.getElementById('risk-pct').value = state.riskPct;
   if (state.feePct) document.getElementById('fee-pct').value = state.feePct;
+  if (state.liveMaxOpen && document.getElementById('live-max-open')) document.getElementById('live-max-open').value = state.liveMaxOpen;
   if (state.autoScoutMax && document.getElementById('auto-scout-max')) document.getElementById('auto-scout-max').value = state.autoScoutMax;
   if (state.autoScoutMinConf && document.getElementById('auto-scout-conf')) document.getElementById('auto-scout-conf').value = state.autoScoutMinConf;
   const btn = document.getElementById('auto-paper-btn');

@@ -137,9 +137,11 @@ window.addEventListener('load',()=>{
     Persistence.fillInputs();
     Persistence.setup();
   }
-  ['acct-size','risk-pct','fee-pct'].forEach(id=>{
+  ['acct-size','risk-pct','fee-pct','live-max-open'].forEach(id=>{
     document.getElementById(id)?.addEventListener('input',()=>{
       renderPositionSizing();
+      renderRiskDashboard();
+      if (typeof runLiveReadiness === 'function') runLiveReadiness();
       persistAppStateSoon();
     });
   });

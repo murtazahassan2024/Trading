@@ -28,6 +28,11 @@ let lastScannerRows = [];
 let audioCtx = null;
 let activeTradeId = null;
 
+function liveMaxOpenTrades() {
+  const value = Number(document.getElementById('live-max-open')?.value || 3);
+  return Number.isFinite(value) ? Math.max(1, Math.min(50, Math.floor(value))) : 3;
+}
+
 function syncPaperTradeSelection() {
   if (!Array.isArray(paperTrades)) paperTrades = [];
   if (activeTradeId) {

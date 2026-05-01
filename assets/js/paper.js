@@ -96,7 +96,7 @@ function totalOpenRiskPct() {
 }
 
 function hardRiskGate(symbol = currentSymbol()) {
-  const maxOpen = Number(document.getElementById('live-max-open')?.value || 3);
+  const maxOpen = liveMaxOpenTrades();
   const dailyLimit = Number(document.getElementById('daily-loss-limit')?.value || 2);
   const totalRiskCap = Math.max(0.25, dailyLimit);
   const dailyLoss = dailyClosedLossPct();

@@ -240,7 +240,7 @@ function runLiveReadiness() {
   const forward = renderForwardTest();
   const backtest = window.lastBacktestSummary || { trades:0, profitFactor:0, expectancy:0, maxDd:0, sharpe:0, sortino:0 };
   const dailyLossLimit = Number(document.getElementById('daily-loss-limit')?.value || 2);
-  const maxOpen = Number(document.getElementById('live-max-open')?.value || 3);
+  const maxOpen = liveMaxOpenTrades();
   const checks = [
     readinessItem('Broker execution', false, 'Alpaca paper adapter exists; live broker remains blocked.'),
     readinessItem('Kill switch', true, 'Stops automation, disconnects streams, closes local paper trades, and sends Alpaca cancel/liquidate.'),

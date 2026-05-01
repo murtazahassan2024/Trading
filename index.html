@@ -174,6 +174,9 @@
 
   <div class="trade-panel">
     <div class="ptitle">Paper position <span class="lpill">SIMULATED</span></div>
+    <div class="paper-limit-grid">
+      <label>Max open trades<input id="live-max-open" type="number" value="3" min="1" max="50" step="1"/></label>
+    </div>
     <div class="trade-actions">
       <button class="trade-btn long-btn" type="button" onclick="openPaperTrade('LONG')">Open Long</button>
       <button class="trade-btn short-btn" type="button" onclick="openPaperTrade('SHORT')">Open Short</button>
@@ -241,7 +244,6 @@
       <button class="small-btn" type="button" onclick="runLiveReadiness()">Check Readiness</button>
       <button class="small-btn" type="button" onclick="simulateExecution()">Simulate Execution</button>
       <label>Daily max loss %<input id="daily-loss-limit" type="number" value="2" min="0.1" max="10" step="0.1"/></label>
-      <label>Max open<input id="live-max-open" type="number" value="3" min="1" max="10" step="1"/></label>
       <label>Sim slippage %<input id="exec-slip" type="number" value="0.05" min="0" max="2" step="0.01"/></label>
     </div>
     <div class="readiness-status" id="readiness-status">
